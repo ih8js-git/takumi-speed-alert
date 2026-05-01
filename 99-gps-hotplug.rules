@@ -1,0 +1,1 @@
+ACTION=="bind", SUBSYSTEM=="tty", ATTRS{idVendor}=="1546", ATTRS{idProduct}=="01a7", SYMLINK+="car_gps", TAG+="systemd", ENV{SYSTEMD_WANTS}="gpsd.service" 
