@@ -4,7 +4,7 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::time::Instant;
 
-use common::{RoadData, RoadLine, RoadTree};
+use common::{RoadData, RoadLine, RoadTree, angle_diff};
 use measurements::Speed;
 use osmpbfreader::{OsmObj, OsmPbfReader};
 use rstar::PointDistance;
@@ -63,13 +63,6 @@ fn calculate_bearing(lon1: f64, lat1: f64, lon2: f64, lat2: f64) -> u16 {
         compass += 360.0;
     }
     (compass.round() as u16) % 360
-}
-
-/// Calculates the difference between two angles in degrees, handling wrapping.
-/// Returns the smallest difference, e.g. 350 degrees and 10 degrees is 20 degrees, not 340 degrees.
-fn angle_diff(a: f64, b: f64) -> f64 {
-    let diff = (a - b).abs() % 360.0;
-    if diff > 180.0 { 360.0 - diff } else { diff }
 }
 
 /// Queries the spatial index for the nearest road to the given point.

@@ -1,4 +1,4 @@
-use common::RoadTree;
+use common::{RoadTree, angle_diff};
 use measurements::Speed;
 use rstar::PointDistance;
 use serde_json::Value;
@@ -11,11 +11,6 @@ use std::time::Instant;
 // --- CONFIGURATION ---
 // Tolerance for matching car's heading to road's bearing.
 const HEADING_TOLERANCE_DEGREES: f64 = 45.0;
-
-fn angle_diff(a: f64, b: f64) -> f64 {
-    let diff = (a - b).abs() % 360.0;
-    if diff > 180.0 { 360.0 - diff } else { diff }
-}
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -52,83 +47,98 @@ fn main() {
     println!("Listening for gpsd data...");
 
     // Read the stream line by line
-    while reader.read_line(&mut line).is_ok() {
-        if let Ok(json) = serde_json::from_str::<Value>(&line) {
-            // Filter for TPV (Time-Position-Velocity) packets
-            if json["class"] == "TPV" {
-                let mode = json["mode"].as_i64().unwrap_or(0);
-
-                // mode 2 is a 2D fix, mode 3 is a 3D fix
-                if mode >= 2 {
-                    let lat = json["lat"].as_f64().unwrap_or(0.0);
-                    let lon = json["lon"].as_f64().unwrap_or(0.0);
-                    let speed = json["speed"].as_f64().unwrap_or(0.0); // m/s
-                    let track = json["track"].as_f64(); // True course in degrees
-
-                    let mut speed_limit_mph = None;
-                    let mut matched_dist = None;
-
-                    let point = [lon, lat];
-
-                    if let Some(heading) = track {
-                        for nearest in tree.nearest_neighbor_iter(&point) {
-                            let dist = nearest.distance_2(&point).sqrt();
-                            if dist > 0.05 {
-                                break;
-                            }
-
-                            let road_bearing = nearest.data.bearing as f64;
-                            let diff = angle_diff(heading, road_bearing);
-                            let mut match_found = diff <= HEADING_TOLERANCE_DEGREES;
-
-                            if !match_found && !nearest.data.is_one_way {
-                                let reverse_diff = angle_diff(heading, road_bearing + 180.0);
-                                if reverse_diff <= HEADING_TOLERANCE_DEGREES {
-                                    match_found = true;
-                                }
-                            }
-
-                            if match_found {
-                                speed_limit_mph = Some(nearest.data.speed_limit_mph);
-                                matched_dist = Some(dist);
-                                break;
-                            }
-                        }
-                    } else {
-                        // Fallback if no track/heading is provided by GPS yet
-                        if let Some(nearest) = tree.nearest_neighbor(&point) {
-                            speed_limit_mph = Some(nearest.data.speed_limit_mph);
-                            matched_dist = Some(nearest.distance_2(&point).sqrt());
-                        }
-                    }
-
-                    print!(
-                        "Fix: {}D | Lat: {:.6} | Lon: {:.6} | Speed: {:.1} mph",
-                        mode,
-                        lat,
-                        lon,
-                        Speed::from_meters_per_second(speed).as_miles_per_hour()
-                    );
-
-                    if let Some(limit) = speed_limit_mph {
-                        print!(
-                            " | Limit: {} mph (dist: {:.5} deg)",
-                            limit,
-                            matched_dist.unwrap()
-                        );
-                    } else {
-                        print!(" | Limit: Unknown");
-                    }
-
-                    if let Some(h) = track {
-                        print!(" | Heading: {:.1}°", h);
-                    }
-                    println!();
-                } else {
-                    println!("Waiting for GPS fix...");
-                }
-            }
+    while let Ok(bytes_read) = reader.read_line(&mut line) {
+        if bytes_read == 0 {
+            break; // EOF or stream closed
         }
+        process_gps_line(&line, &tree);
         line.clear();
     }
+}
+
+fn process_gps_line(line: &str, tree: &RoadTree) {
+    let Ok(json) = serde_json::from_str::<Value>(line) else {
+        return;
+    };
+
+    // Filter for TPV (Time-Position-Velocity) packets
+    if json["class"] != "TPV" {
+        return;
+    }
+
+    let mode = json["mode"].as_i64().unwrap_or(0);
+
+    // mode 2 is a 2D fix, mode 3 is a 3D fix
+    if mode < 2 {
+        println!("Waiting for GPS fix...");
+        return;
+    }
+
+    let lat = json["lat"].as_f64().unwrap_or(0.0);
+    let lon = json["lon"].as_f64().unwrap_or(0.0);
+    let speed = json["speed"].as_f64().unwrap_or(0.0); // m/s
+    let track = json["track"].as_f64(); // True course in degrees
+
+    let point = [lon, lat];
+
+    let (speed_limit_mph, matched_dist) = match_road(&point, track, tree);
+
+    print!(
+        "Fix: {}D | Lat: {:.6} | Lon: {:.6} | Speed: {:.1} mph",
+        mode,
+        lat,
+        lon,
+        Speed::from_meters_per_second(speed).as_miles_per_hour()
+    );
+
+    if let Some(limit) = speed_limit_mph {
+        print!(
+            " | Limit: {} mph (dist: {:.5} deg)",
+            limit,
+            matched_dist.unwrap()
+        );
+    } else {
+        print!(" | Limit: Unknown");
+    }
+
+    if let Some(h) = track {
+        print!(" | Heading: {:.1}°", h);
+    }
+    println!();
+}
+
+fn match_road(point: &[f64; 2], track: Option<f64>, tree: &RoadTree) -> (Option<u8>, Option<f64>) {
+    if let Some(heading) = track {
+        for nearest in tree.nearest_neighbor_iter(point) {
+            let dist = nearest.distance_2(point).sqrt();
+            if dist > 0.05 {
+                break;
+            }
+
+            let road_bearing = nearest.data.bearing as f64;
+            let diff = angle_diff(heading, road_bearing);
+            let mut match_found = diff <= HEADING_TOLERANCE_DEGREES;
+
+            if !match_found && !nearest.data.is_one_way {
+                let reverse_diff = angle_diff(heading, road_bearing + 180.0);
+                if reverse_diff <= HEADING_TOLERANCE_DEGREES {
+                    match_found = true;
+                }
+            }
+
+            if match_found {
+                return (Some(nearest.data.speed_limit_mph), Some(dist));
+            }
+        }
+    } else {
+        // Fallback if no track/heading is provided by GPS yet
+        if let Some(nearest) = tree.nearest_neighbor(point) {
+            return (
+                Some(nearest.data.speed_limit_mph),
+                Some(nearest.distance_2(point).sqrt()),
+            );
+        }
+    }
+
+    (None, None)
 }
