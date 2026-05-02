@@ -24,6 +24,21 @@ fn parse_speed_limit(val: &str) -> Option<u8> {
     }
 }
 
+fn get_default_speed_limit(highway_type: &str) -> Option<u8> {
+    match highway_type {
+        "motorway" => Some(70),
+        "motorway_link" => Some(45),
+        "trunk" | "trunk_link" => Some(65),
+        "primary" | "primary_link" => Some(55),
+        "secondary" | "secondary_link" => Some(45),
+        "tertiary" | "tertiary_link" => Some(45),
+        "unclassified" => Some(35),
+        "residential" => Some(25),
+        "living_street" => Some(15),
+        _ => None, // Things like footway, cycleway, path, etc. have no default speed limit
+    }
+}
+
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() >= 4 && args[1] == "--query" {
@@ -82,24 +97,34 @@ fn main() {
                 nodes.insert(node.id, [node.lon(), node.lat()]);
             }
             OsmObj::Way(way) => {
-                if way.tags.contains_key("highway") {
+                if let Some(highway_type) = way.tags.get("highway") {
+                    let mut final_speed = None;
+
+                    // First try to parse an explicit maxspeed tag
                     if let Some(maxspeed_str) = way.tags.get("maxspeed") {
-                        if let Some(speed_limit) = parse_speed_limit(maxspeed_str) {
-                            way_count += 1;
-                            let data = RoadData {
-                                speed_limit_mph: speed_limit,
-                            };
+                        final_speed = parse_speed_limit(maxspeed_str);
+                    }
 
-                            for window in way.nodes.windows(2) {
-                                let n1_id = window[0];
-                                let n2_id = window[1];
+                    // If that failed or wasn't present, fall back to the default
+                    if final_speed.is_none() {
+                        final_speed = get_default_speed_limit(highway_type);
+                    }
 
-                                if let (Some(&p1), Some(&p2)) = (nodes.get(&n1_id), nodes.get(&n2_id)) {
-                                    let line = RoadLine::new(p1, p2);
-                                    let segment = GeomWithData::new(line, data.clone());
-                                    segments.push(segment);
-                                    segment_count += 1;
-                                }
+                    if let Some(speed_limit) = final_speed {
+                        way_count += 1;
+                        let data = RoadData {
+                            speed_limit_mph: speed_limit,
+                        };
+
+                        for window in way.nodes.windows(2) {
+                            let n1_id = window[0];
+                            let n2_id = window[1];
+
+                            if let (Some(&p1), Some(&p2)) = (nodes.get(&n1_id), nodes.get(&n2_id)) {
+                                let line = RoadLine::new(p1, p2);
+                                let segment = GeomWithData::new(line, data.clone());
+                                segments.push(segment);
+                                segment_count += 1;
                             }
                         }
                     }
