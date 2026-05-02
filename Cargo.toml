@@ -14,3 +14,4 @@ rstar = "0.12.2"
 memmap2 = "0.9.10"
 osmpbfreader = "0.19.1"
 common = { path = "common" }
+measurements = "0.11.1"

@@ -56,6 +56,7 @@ version = "0.1.0"
 dependencies = [
  "bincode",
  "common",
+ "measurements",
  "memmap2",
  "rstar",
  "serde",
@@ -286,9 +287,19 @@ version = "0.1.0"
 dependencies = [
  "bincode",
  "common",
+ "measurements",
  "memmap2",
  "osmpbfreader",
  "rstar",
+]
+
+[[package]]
+name = "measurements"
+version = "0.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f72b38901c571007811f0483e64a7e215ac9e6e3688e9f83705a717621d81513"
+dependencies = [
+ "libm",
 ]
 
 [[package]]

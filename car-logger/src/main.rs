@@ -1,4 +1,5 @@
 use common::RoadTree;
+use measurements::Speed;
 use rstar::PointDistance;
 use serde_json::Value;
 use std::env;
@@ -106,7 +107,7 @@ fn main() {
                         mode,
                         lat,
                         lon,
-                        speed * 2.23694 // convert m/s to mph
+                        Speed::from_meters_per_second(speed).as_miles_per_hour()
                     );
 
                     if let Some(limit) = speed_limit_mph {

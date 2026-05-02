@@ -5,6 +5,7 @@ use std::io::{BufWriter, Write};
 use std::time::Instant;
 
 use common::{RoadData, RoadLine, RoadTree};
+use measurements::Speed;
 use osmpbfreader::{OsmObj, OsmPbfReader};
 use rstar::PointDistance;
 use rstar::primitives::GeomWithData;
@@ -14,21 +15,27 @@ use rstar::primitives::GeomWithData;
 // A tolerance of 45.0 means the car must be traveling within +/- 45 degrees of the road's direction.
 const HEADING_TOLERANCE_DEGREES: f64 = 45.0;
 
+/// Parses a speed limit string (e.g., "65", "45 km/h") into an optional u8 in MPH.
 fn parse_speed_limit(val: &str) -> Option<u8> {
-    let s = val.to_lowercase();
-    let num_str: String = s.chars().filter(|c| c.is_digit(10)).collect();
+    let val_lower = val.to_lowercase();
+    let num_str: String = val_lower.chars().filter(|c| c.is_digit(10)).collect();
     if num_str.is_empty() {
         return None;
     }
     let speed: u8 = num_str.parse().ok()?;
 
-    if s.contains("km/h") || s.contains("kmh") {
-        Some((speed as f32 * 0.621371).round() as u8)
+    if val_lower.contains("km/h") || val_lower.contains("kmh") {
+        Some(
+            Speed::from_kilometers_per_hour(speed as f64)
+                .as_miles_per_hour()
+                .round() as u8,
+        )
     } else {
         Some(speed) // Assume mph
     }
 }
 
+/// Returns the default speed limit in MPH for a given highway type.
 fn get_default_speed_limit(highway_type: &str) -> Option<u8> {
     match highway_type {
         "motorway" => Some(70),
@@ -44,6 +51,7 @@ fn get_default_speed_limit(highway_type: &str) -> Option<u8> {
     }
 }
 
+/// Calculates the bearing (direction) of a line segment between two points in degrees.
 fn calculate_bearing(lon1: f64, lat1: f64, lon2: f64, lat2: f64) -> u16 {
     let dy = lat2 - lat1;
     let lat_rad = lat1 * std::f64::consts::PI / 180.0;
@@ -57,93 +65,113 @@ fn calculate_bearing(lon1: f64, lat1: f64, lon2: f64, lat2: f64) -> u16 {
     (compass.round() as u16) % 360
 }
 
+/// Calculates the difference between two angles in degrees, handling wrapping.
+/// Returns the smallest difference, e.g. 350 degrees and 10 degrees is 20 degrees, not 340 degrees.
 fn angle_diff(a: f64, b: f64) -> f64 {
     let diff = (a - b).abs() % 360.0;
     if diff > 180.0 { 360.0 - diff } else { diff }
 }
 
+/// Queries the spatial index for the nearest road to the given point.
+///
+/// Arguments:
+/// * `args[1]` - The command, which must be "--query".
+/// * `args[2]` - The path to the binary spatial index file.
+/// * `args[3]` - A comma-separated string of longitude and latitude (e.g., "-122.4194,37.7749").
+/// * `args[4]` - Optional heading in degrees (e.g., "45").
+///
+/// Panics if the arguments are invalid or if the file cannot be opened.
+///
+/// Prints:
+/// * The speed limit in mph of the nearest road to the given point.
+/// * The directionality of the nearest road (one_way or two_way).
+/// * The bearing of the nearest road in degrees.
+fn run_query(args: &[String]) {
+    let bin_path = &args[2];
+    let lon_lat: Vec<f64> = args[3].split(',').filter_map(|s| s.parse().ok()).collect();
+    if lon_lat.len() != 2 {
+        eprintln!("Usage: {} --query <roads.bin> <lon,lat> [heading]", args[0]);
+        std::process::exit(1);
+    }
+
+    let mut car_heading: Option<f64> = None;
+    if args.len() >= 5 {
+        car_heading = args[4].parse().ok();
+    }
+
+    let start = Instant::now();
+    let file = File::open(bin_path).expect("Failed to open bin file");
+    let mmap = unsafe {
+        memmap2::MmapOptions::new()
+            .map(&file)
+            .expect("Failed to map file")
+    };
+    println!("Mapped file in {:.2?}", start.elapsed());
+
+    let start_deser = Instant::now();
+    let tree: RoadTree = bincode::deserialize(&mmap).expect("Failed to deserialize tree");
+    println!("Deserialized tree in {:.2?}", start_deser.elapsed());
+
+    let point = [lon_lat[0], lon_lat[1]];
+    let start_query = Instant::now();
+
+    let mut best_match = None;
+
+    if let Some(heading) = car_heading {
+        println!(
+            "Filtering for heading: {} degrees (+/- {} tolerance)",
+            heading, HEADING_TOLERANCE_DEGREES
+        );
+        for nearest in tree.nearest_neighbor_iter(&point) {
+            let dist = nearest.distance_2(&point).sqrt();
+            if dist > 0.05 {
+                // Stop searching if roads are too far
+                break;
+            }
+
+            let road_bearing = nearest.data.bearing as f64;
+            let diff = angle_diff(heading, road_bearing);
+            let mut match_found = diff <= HEADING_TOLERANCE_DEGREES;
+
+            if !match_found && !nearest.data.is_one_way {
+                let reverse_diff = angle_diff(heading, road_bearing + 180.0);
+                if reverse_diff <= HEADING_TOLERANCE_DEGREES {
+                    match_found = true;
+                }
+            }
+
+            if match_found {
+                best_match = Some((nearest, dist));
+                break;
+            }
+        }
+    } else {
+        if let Some(nearest) = tree.nearest_neighbor(&point) {
+            let dist = nearest.distance_2(&point).sqrt();
+            best_match = Some((nearest, dist));
+        }
+    }
+
+    if let Some((nearest, dist)) = best_match {
+        println!(
+            "Nearest road speed limit: {} mph (distance: {:.5} deg)",
+            nearest.data.speed_limit_mph, dist
+        );
+        println!(
+            "Road directionality: one_way={}, bearing={}",
+            nearest.data.is_one_way, nearest.data.bearing
+        );
+    } else {
+        println!("No valid roads found.");
+    }
+
+    println!("Query time: {:.2?}", start_query.elapsed());
+}
+
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() >= 4 && args[1] == "--query" {
-        let bin_path = &args[2];
-        let lon_lat: Vec<f64> = args[3].split(',').filter_map(|s| s.parse().ok()).collect();
-        if lon_lat.len() != 2 {
-            eprintln!("Usage: {} --query <roads.bin> <lon,lat> [heading]", args[0]);
-            std::process::exit(1);
-        }
-
-        let mut car_heading: Option<f64> = None;
-        if args.len() >= 5 {
-            car_heading = args[4].parse().ok();
-        }
-
-        let start = Instant::now();
-        let file = File::open(bin_path).expect("Failed to open bin file");
-        let mmap = unsafe {
-            memmap2::MmapOptions::new()
-                .map(&file)
-                .expect("Failed to map file")
-        };
-        println!("Mapped file in {:.2?}", start.elapsed());
-
-        let start_deser = Instant::now();
-        let tree: RoadTree = bincode::deserialize(&mmap).expect("Failed to deserialize tree");
-        println!("Deserialized tree in {:.2?}", start_deser.elapsed());
-
-        let point = [lon_lat[0], lon_lat[1]];
-        let start_query = Instant::now();
-
-        let mut best_match = None;
-
-        if let Some(heading) = car_heading {
-            println!(
-                "Filtering for heading: {} degrees (+/- {} tolerance)",
-                heading, HEADING_TOLERANCE_DEGREES
-            );
-            for nearest in tree.nearest_neighbor_iter(&point) {
-                let dist = nearest.distance_2(&point).sqrt();
-                if dist > 0.05 {
-                    // Stop searching if roads are too far
-                    break;
-                }
-
-                let road_bearing = nearest.data.bearing as f64;
-                let diff = angle_diff(heading, road_bearing);
-                let mut match_found = diff <= HEADING_TOLERANCE_DEGREES;
-
-                if !match_found && !nearest.data.is_one_way {
-                    let reverse_diff = angle_diff(heading, road_bearing + 180.0);
-                    if reverse_diff <= HEADING_TOLERANCE_DEGREES {
-                        match_found = true;
-                    }
-                }
-
-                if match_found {
-                    best_match = Some((nearest, dist));
-                    break;
-                }
-            }
-        } else {
-            if let Some(nearest) = tree.nearest_neighbor(&point) {
-                let dist = nearest.distance_2(&point).sqrt();
-                best_match = Some((nearest, dist));
-            }
-        }
-
-        if let Some((nearest, dist)) = best_match {
-            println!(
-                "Nearest road speed limit: {} mph (distance: {:.5} deg)",
-                nearest.data.speed_limit_mph, dist
-            );
-            println!(
-                "Road directionality: one_way={}, bearing={}",
-                nearest.data.is_one_way, nearest.data.bearing
-            );
-        } else {
-            println!("No valid roads found.");
-        }
-
-        println!("Query time: {:.2?}", start_query.elapsed());
+        run_query(&args);
         return;
     }
 

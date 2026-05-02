@@ -7,5 +7,6 @@ edition = "2024"
 bincode = { workspace = true }
 common = { workspace = true }
 memmap2 = { workspace = true }
+measurements = { workspace = true }
 osmpbfreader = { workspace = true }
 rstar = { workspace = true }
