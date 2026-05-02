@@ -1,8 +1,38 @@
+use common::RoadTree;
+use rstar::PointDistance;
 use serde_json::Value;
+use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
+use std::time::Instant;
+
+// --- CONFIGURATION ---
+// Tolerance for matching car's heading to road's bearing.
+const HEADING_TOLERANCE_DEGREES: f64 = 45.0;
+
+fn angle_diff(a: f64, b: f64) -> f64 {
+    let diff = (a - b).abs() % 360.0;
+    if diff > 180.0 {
+        360.0 - diff
+    } else {
+        diff
+    }
+}
 
 fn main() {
+    println!("Loading spatial index...");
+    let start_load = Instant::now();
+    let file_path = if std::path::Path::new("map-preprocessor/roads.bin").exists() {
+        "map-preprocessor/roads.bin"
+    } else {
+        "roads.bin"
+    };
+    
+    let file = File::open(file_path).expect("Failed to open roads.bin");
+    let mmap = unsafe { memmap2::MmapOptions::new().map(&file).expect("Failed to map roads.bin") };
+    let tree: RoadTree = bincode::deserialize(&mmap).expect("Failed to deserialize tree");
+    println!("Loaded map index in {:.2?}", start_load.elapsed());
+
     // Connect to the local gpsd TCP socket
     let stream = TcpStream::connect("127.0.0.1:2947").expect("Failed to connect to gpsd");
     let mut reader = BufReader::new(&stream);
@@ -27,12 +57,64 @@ fn main() {
                 if mode >= 2 {
                     let lat = json["lat"].as_f64().unwrap_or(0.0);
                     let lon = json["lon"].as_f64().unwrap_or(0.0);
-                    let speed = json["speed"].as_f64().unwrap_or(0.0); // Speed in meters per second
+                    let speed = json["speed"].as_f64().unwrap_or(0.0); // m/s
+                    let track = json["track"].as_f64(); // True course in degrees
 
-                    println!(
-                        "Fix: {}D | Lat: {:.6} | Lon: {:.6} | Speed: {:.2} m/s",
-                        mode, lat, lon, speed
+                    let mut speed_limit_mph = None;
+                    let mut matched_dist = None;
+
+                    let point = [lon, lat];
+
+                    if let Some(heading) = track {
+                        for nearest in tree.nearest_neighbor_iter(&point) {
+                            let dist = nearest.distance_2(&point).sqrt();
+                            if dist > 0.05 {
+                                break;
+                            }
+
+                            let road_bearing = nearest.data.bearing as f64;
+                            let diff = angle_diff(heading, road_bearing);
+                            let mut match_found = diff <= HEADING_TOLERANCE_DEGREES;
+
+                            if !match_found && !nearest.data.is_one_way {
+                                let reverse_diff = angle_diff(heading, road_bearing + 180.0);
+                                if reverse_diff <= HEADING_TOLERANCE_DEGREES {
+                                    match_found = true;
+                                }
+                            }
+
+                            if match_found {
+                                speed_limit_mph = Some(nearest.data.speed_limit_mph);
+                                matched_dist = Some(dist);
+                                break;
+                            }
+                        }
+                    } else {
+                        // Fallback if no track/heading is provided by GPS yet
+                        if let Some(nearest) = tree.nearest_neighbor(&point) {
+                            speed_limit_mph = Some(nearest.data.speed_limit_mph);
+                            matched_dist = Some(nearest.distance_2(&point).sqrt());
+                        }
+                    }
+
+                    print!(
+                        "Fix: {}D | Lat: {:.6} | Lon: {:.6} | Speed: {:.1} mph",
+                        mode,
+                        lat,
+                        lon,
+                        speed * 2.23694 // convert m/s to mph
                     );
+
+                    if let Some(limit) = speed_limit_mph {
+                        print!(" | Limit: {} mph (dist: {:.5} deg)", limit, matched_dist.unwrap());
+                    } else {
+                        print!(" | Limit: Unknown");
+                    }
+
+                    if let Some(h) = track {
+                        print!(" | Heading: {:.1}°", h);
+                    }
+                    println!();
                 } else {
                     println!("Waiting for GPS fix...");
                 }

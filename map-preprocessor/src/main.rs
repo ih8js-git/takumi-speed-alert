@@ -9,6 +9,11 @@ use osmpbfreader::{OsmObj, OsmPbfReader};
 use rstar::primitives::GeomWithData;
 use rstar::PointDistance;
 
+// --- CONFIGURATION ---
+// Easy to access variable for adjusting how strict our heading filter is.
+// A tolerance of 45.0 means the car must be traveling within +/- 45 degrees of the road's direction.
+const HEADING_TOLERANCE_DEGREES: f64 = 45.0; 
+
 fn parse_speed_limit(val: &str) -> Option<u8> {
     let s = val.to_lowercase();
     let num_str: String = s.chars().filter(|c| c.is_digit(10)).collect();
@@ -39,14 +44,41 @@ fn get_default_speed_limit(highway_type: &str) -> Option<u8> {
     }
 }
 
+fn calculate_bearing(lon1: f64, lat1: f64, lon2: f64, lat2: f64) -> u16 {
+    let dy = lat2 - lat1;
+    let lat_rad = lat1 * std::f64::consts::PI / 180.0;
+    let dx = (lon2 - lon1) * lat_rad.cos();
+    
+    let math_angle = dy.atan2(dx) * 180.0 / std::f64::consts::PI;
+    let mut compass = 90.0 - math_angle;
+    while compass < 0.0 {
+        compass += 360.0;
+    }
+    (compass.round() as u16) % 360
+}
+
+fn angle_diff(a: f64, b: f64) -> f64 {
+    let diff = (a - b).abs() % 360.0;
+    if diff > 180.0 {
+        360.0 - diff
+    } else {
+        diff
+    }
+}
+
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() >= 4 && args[1] == "--query" {
         let bin_path = &args[2];
         let lon_lat: Vec<f64> = args[3].split(',').filter_map(|s| s.parse().ok()).collect();
         if lon_lat.len() != 2 {
-            eprintln!("Usage: {} --query <roads.bin> <lon,lat>", args[0]);
+            eprintln!("Usage: {} --query <roads.bin> <lon,lat> [heading]", args[0]);
             std::process::exit(1);
+        }
+
+        let mut car_heading: Option<f64> = None;
+        if args.len() >= 5 {
+            car_heading = args[4].parse().ok();
         }
 
         let start = Instant::now();
@@ -60,19 +92,54 @@ fn main() {
 
         let point = [lon_lat[0], lon_lat[1]];
         let start_query = Instant::now();
-        if let Some(nearest) = tree.nearest_neighbor(&point) {
-            let dist = nearest.distance_2(&point).sqrt();
-            println!("Nearest road speed limit: {} mph (distance: {:.5} deg)", nearest.data.speed_limit_mph, dist);
+
+        let mut best_match = None;
+
+        if let Some(heading) = car_heading {
+            println!("Filtering for heading: {} degrees (+/- {} tolerance)", heading, HEADING_TOLERANCE_DEGREES);
+            for nearest in tree.nearest_neighbor_iter(&point) {
+                let dist = nearest.distance_2(&point).sqrt();
+                if dist > 0.05 { // Stop searching if roads are too far
+                    break;
+                }
+                
+                let road_bearing = nearest.data.bearing as f64;
+                let diff = angle_diff(heading, road_bearing);
+                let mut match_found = diff <= HEADING_TOLERANCE_DEGREES;
+                
+                if !match_found && !nearest.data.is_one_way {
+                    let reverse_diff = angle_diff(heading, road_bearing + 180.0);
+                    if reverse_diff <= HEADING_TOLERANCE_DEGREES {
+                        match_found = true;
+                    }
+                }
+                
+                if match_found {
+                    best_match = Some((nearest, dist));
+                    break;
+                }
+            }
         } else {
-            println!("No roads found.");
+            if let Some(nearest) = tree.nearest_neighbor(&point) {
+                let dist = nearest.distance_2(&point).sqrt();
+                best_match = Some((nearest, dist));
+            }
         }
+
+        if let Some((nearest, dist)) = best_match {
+            println!("Nearest road speed limit: {} mph (distance: {:.5} deg)", nearest.data.speed_limit_mph, dist);
+            println!("Road directionality: one_way={}, bearing={}", nearest.data.is_one_way, nearest.data.bearing);
+        } else {
+            println!("No valid roads found.");
+        }
+        
         println!("Query time: {:.2?}", start_query.elapsed());
         return;
     }
 
     if args.len() != 3 {
         eprintln!("Usage: {} <input.pbf> <output.bin>", args[0]);
-        eprintln!("       {} --query <roads.bin> <lon,lat>", args[0]);
+        eprintln!("       {} --query <roads.bin> <lon,lat> [heading]", args[0]);
         std::process::exit(1);
     }
 
@@ -100,29 +167,43 @@ fn main() {
                 if let Some(highway_type) = way.tags.get("highway") {
                     let mut final_speed = None;
 
-                    // First try to parse an explicit maxspeed tag
                     if let Some(maxspeed_str) = way.tags.get("maxspeed") {
                         final_speed = parse_speed_limit(maxspeed_str);
                     }
 
-                    // If that failed or wasn't present, fall back to the default
                     if final_speed.is_none() {
                         final_speed = get_default_speed_limit(highway_type);
                     }
 
                     if let Some(speed_limit) = final_speed {
+                        let oneway_tag = way.tags.get("oneway").map(|s| s.as_str()).unwrap_or("no");
+                        let mut is_one_way = oneway_tag == "yes" || oneway_tag == "true" || oneway_tag == "1" || oneway_tag == "-1";
+                        let is_reversed = oneway_tag == "-1";
+
+                        if highway_type == "motorway" || highway_type == "motorway_link" {
+                            is_one_way = true;
+                        }
+
                         way_count += 1;
-                        let data = RoadData {
-                            speed_limit_mph: speed_limit,
-                        };
 
                         for window in way.nodes.windows(2) {
                             let n1_id = window[0];
                             let n2_id = window[1];
 
                             if let (Some(&p1), Some(&p2)) = (nodes.get(&n1_id), nodes.get(&n2_id)) {
+                                let mut bearing = calculate_bearing(p1[0], p1[1], p2[0], p2[1]);
+                                if is_reversed {
+                                    bearing = (bearing + 180) % 360;
+                                }
+
+                                let data = RoadData {
+                                    speed_limit_mph: speed_limit,
+                                    is_one_way,
+                                    bearing,
+                                };
+
                                 let line = RoadLine::new(p1, p2);
-                                let segment = GeomWithData::new(line, data.clone());
+                                let segment = GeomWithData::new(line, data);
                                 segments.push(segment);
                                 segment_count += 1;
                             }
