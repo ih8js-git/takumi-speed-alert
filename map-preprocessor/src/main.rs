@@ -137,16 +137,26 @@ fn main() {
         return;
     }
 
-    if args.len() != 3 {
-        eprintln!("Usage: {} <input.pbf> <output.bin>", args[0]);
-        eprintln!("       {} --query <roads.bin> <lon,lat> [heading]", args[0]);
+    if args.len() != 2 {
+        eprintln!("Usage: {} <input.pbf>", args[0]);
+        eprintln!("       {} --query <input.bin> <lon,lat> [heading]", args[0]);
         std::process::exit(1);
     }
 
-    let input_path = &args[1];
-    let output_path = &args[2];
+    let input_path = std::path::Path::new(&args[1]);
+    let file_stem = input_path.file_stem().and_then(|s| s.to_str()).unwrap_or("map");
+    let base_name = file_stem.strip_suffix(".osm").unwrap_or(file_stem);
+    
+    // Determine the common directory (works whether run from workspace root or map-preprocessor dir)
+    let common_dir = if std::path::Path::new("../common").exists() {
+        "../common"
+    } else {
+        "common"
+    };
+    
+    let output_path = format!("{}/{}.bin", common_dir, base_name);
 
-    println!("Parsing OSM PBF file: {}", input_path);
+    println!("Parsing OSM PBF file: {}", input_path.display());
     let start_time = Instant::now();
 
     let file = File::open(input_path).expect("Failed to open input file");

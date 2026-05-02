@@ -1,6 +1,7 @@
 use common::RoadTree;
 use rstar::PointDistance;
 use serde_json::Value;
+use std::env;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
@@ -20,16 +21,19 @@ fn angle_diff(a: f64, b: f64) -> f64 {
 }
 
 fn main() {
-    println!("Loading spatial index...");
-    let start_load = Instant::now();
-    let file_path = if std::path::Path::new("map-preprocessor/roads.bin").exists() {
-        "map-preprocessor/roads.bin"
-    } else {
-        "roads.bin"
-    };
+    let args: Vec<String> = env::args().collect();
+    if args.len() != 2 {
+        eprintln!("Usage: {} <map.bin>", args[0]);
+        std::process::exit(1);
+    }
     
-    let file = File::open(file_path).expect("Failed to open roads.bin");
-    let mmap = unsafe { memmap2::MmapOptions::new().map(&file).expect("Failed to map roads.bin") };
+    let map_path = &args[1];
+
+    println!("Loading spatial index from {}...", map_path);
+    let start_load = Instant::now();
+    
+    let file = File::open(map_path).expect("Failed to open map.bin");
+    let mmap = unsafe { memmap2::MmapOptions::new().map(&file).expect("Failed to map file") };
     let tree: RoadTree = bincode::deserialize(&mmap).expect("Failed to deserialize tree");
     println!("Loaded map index in {:.2?}", start_load.elapsed());
 
