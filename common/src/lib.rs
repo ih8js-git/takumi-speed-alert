@@ -1,4 +1,7 @@
-use rstar::{primitives::{GeomWithData, Line}, RTree};
+use rstar::{
+    RTree,
+    primitives::{GeomWithData, Line},
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
