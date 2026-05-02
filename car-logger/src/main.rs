@@ -11,6 +11,10 @@ use std::time::Instant;
 // --- CONFIGURATION ---
 // Tolerance for matching car's heading to road's bearing.
 const HEADING_TOLERANCE_DEGREES: f64 = 45.0;
+// How much over the speed limit you can go before triggering an alert.
+const SPEED_LIMIT_TOLERANCE_MPH: f64 = 5.0;
+// How long you must be speeding continuously before the beep sounds.
+const SPEEDING_DURATION_BEFORE_BEEP_SECONDS: f64 = 5.0;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -46,17 +50,19 @@ fn main() {
     let mut line = String::new();
     println!("Listening for gpsd data...");
 
+    let mut speeding_start_time: Option<Instant> = None;
+
     // Read the stream line by line
     while let Ok(bytes_read) = reader.read_line(&mut line) {
         if bytes_read == 0 {
             break; // EOF or stream closed
         }
-        process_gps_line(&line, &tree);
+        process_gps_line(&line, &tree, &mut speeding_start_time);
         line.clear();
     }
 }
 
-fn process_gps_line(line: &str, tree: &RoadTree) {
+fn process_gps_line(line: &str, tree: &RoadTree, speeding_start_time: &mut Option<Instant>) {
     let Ok(json) = serde_json::from_str::<Value>(line) else {
         return;
     };
@@ -71,12 +77,14 @@ fn process_gps_line(line: &str, tree: &RoadTree) {
     // mode 2 is a 2D fix, mode 3 is a 3D fix
     if mode < 2 {
         println!("Waiting for GPS fix...");
+        *speeding_start_time = None;
         return;
     }
 
     let lat = json["lat"].as_f64().unwrap_or(0.0);
     let lon = json["lon"].as_f64().unwrap_or(0.0);
     let speed = json["speed"].as_f64().unwrap_or(0.0); // m/s
+    let speed_mph = Speed::from_meters_per_second(speed).as_miles_per_hour();
     let track = json["track"].as_f64(); // True course in degrees
 
     let point = [lon, lat];
@@ -88,7 +96,7 @@ fn process_gps_line(line: &str, tree: &RoadTree) {
         mode,
         lat,
         lon,
-        Speed::from_meters_per_second(speed).as_miles_per_hour()
+        speed_mph
     );
 
     if let Some(limit) = speed_limit_mph {
@@ -97,8 +105,21 @@ fn process_gps_line(line: &str, tree: &RoadTree) {
             limit,
             matched_dist.unwrap()
         );
+
+        if speed_mph > (limit as f64 + SPEED_LIMIT_TOLERANCE_MPH) {
+            if speeding_start_time.is_none() {
+                *speeding_start_time = Some(Instant::now());
+            } else if let Some(start) = speeding_start_time {
+                if start.elapsed().as_secs_f64() >= SPEEDING_DURATION_BEFORE_BEEP_SECONDS {
+                    print!(" | *** BEEP BEEP BEEP! ***");
+                }
+            }
+        } else {
+            *speeding_start_time = None;
+        }
     } else {
         print!(" | Limit: Unknown");
+        *speeding_start_time = None;
     }
 
     if let Some(h) = track {
