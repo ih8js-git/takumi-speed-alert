@@ -6,7 +6,9 @@ use std::env;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
@@ -27,10 +29,71 @@ impl Default for Config {
     }
 }
 
+struct Recorder {
+    start_time: Option<u64>,
+    end_time: Option<u64>,
+    file: Option<File>,
+    temp_path: String,
+    last_point_time: Option<Instant>,
+}
+
+impl Recorder {
+    fn new() -> Self {
+        Self {
+            start_time: None,
+            end_time: None,
+            file: None,
+            temp_path: String::new(),
+            last_point_time: None,
+        }
+    }
+
+    fn record_point(&mut self, timestamp: &str, lon: f64, lat: f64, track: Option<f64>, speed: f64) {
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let track_str = match track {
+            Some(t) => t.to_string(),
+            None => "".to_string(),
+        };
+
+        if self.start_time.is_none() {
+            self.start_time = Some(now);
+            self.temp_path = format!("{}_inprogress.csv", now);
+            let mut f = File::create(&self.temp_path).expect("Failed to create record file");
+            writeln!(f, "time,long,lat,track,speed").unwrap();
+            writeln!(f, "{},{},{},{},{}", timestamp, lon, lat, track_str, speed).unwrap();
+            self.file = Some(f);
+            self.last_point_time = Some(Instant::now());
+        } else {
+            if let Some(last_time) = self.last_point_time {
+                let delta = last_time.elapsed().as_secs_f64();
+                self.last_point_time = Some(Instant::now());
+                if let Some(f) = &mut self.file {
+                    writeln!(f, "{:.3},{},{},{},{}", delta, lon, lat, track_str, speed).unwrap();
+                }
+            }
+        }
+        self.end_time = Some(now);
+    }
+
+    fn finish(mut self) {
+        if let (Some(f), Some(start), Some(end)) = (self.file.take(), self.start_time, self.end_time) {
+            drop(f); // ensure it's flushed/closed
+            let new_path = format!("{}-{}.csv", start, end);
+            let _ = std::fs::rename(&self.temp_path, new_path);
+        }
+    }
+}
+
 fn main() {
-    let args: Vec<String> = env::args().collect();
+    let mut args: Vec<String> = env::args().collect();
+    let record_flag_idx = args.iter().position(|a| a == "--record");
+    let record = record_flag_idx.is_some();
+    if let Some(idx) = record_flag_idx {
+        args.remove(idx);
+    }
+
     if args.len() != 2 {
-        eprintln!("Usage: {} <map.bin>", args[0]);
+        eprintln!("Usage: {} [--record] <map.bin>", args[0]);
         std::process::exit(1);
     }
 
@@ -76,15 +139,37 @@ fn main() {
     let mut line = String::new();
     println!("Listening for gpsd data...");
 
+    let running = Arc::new(AtomicBool::new(true));
+    let r = running.clone();
+    ctrlc::set_handler(move || {
+        println!("\nShutting down gracefully...");
+        r.store(false, Ordering::SeqCst);
+    }).expect("Error setting Ctrl-C handler");
+
+    stream.set_read_timeout(Some(std::time::Duration::from_millis(500))).expect("Failed to set read timeout");
+
     let mut speeding_start_time: Option<Instant> = None;
+    let mut recorder = if record { Some(Recorder::new()) } else { None };
 
     // Read the stream line by line
-    while let Ok(bytes_read) = reader.read_line(&mut line) {
-        if bytes_read == 0 {
-            break; // EOF or stream closed
+    while running.load(Ordering::SeqCst) {
+        match reader.read_line(&mut line) {
+            Ok(0) => break, // EOF or stream closed
+            Ok(_) => {
+                process_gps_line(&line, &tree, &mut speeding_start_time, &config, &mut recorder);
+                line.clear();
+            }
+            Err(e) => {
+                if e.kind() == std::io::ErrorKind::WouldBlock || e.kind() == std::io::ErrorKind::TimedOut {
+                    continue;
+                }
+                break;
+            }
         }
-        process_gps_line(&line, &tree, &mut speeding_start_time, &config);
-        line.clear();
+    }
+
+    if let Some(r) = recorder {
+        r.finish();
     }
 }
 
@@ -93,6 +178,7 @@ fn process_gps_line(
     tree: &RoadTree,
     speeding_start_time: &mut Option<Instant>,
     config: &Config,
+    recorder: &mut Option<Recorder>,
 ) {
     let Ok(json) = serde_json::from_str::<Value>(line) else {
         return;
@@ -117,6 +203,11 @@ fn process_gps_line(
     let speed = json["speed"].as_f64().unwrap_or(0.0); // m/s
     let speed_mph = Speed::from_meters_per_second(speed).as_miles_per_hour();
     let track = json["track"].as_f64(); // True course in degrees
+    let time_str = json["time"].as_str().unwrap_or("");
+
+    if let Some(r) = recorder {
+        r.record_point(time_str, lon, lat, track, speed);
+    }
 
     let point = [lon, lat];
 

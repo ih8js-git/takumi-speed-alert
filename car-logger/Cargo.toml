@@ -11,3 +11,4 @@ measurements = { workspace = true }
 rstar = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+ctrlc = { workspace = true }
