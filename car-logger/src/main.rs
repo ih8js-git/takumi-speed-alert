@@ -13,6 +13,8 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use chrono::TimeZone;
 use serde::{Deserialize, Serialize};
 
+const CONFIG_PATH: &str = "config.json";
+
 #[derive(Debug, Serialize, Deserialize)]
 struct Config {
     heading_tolerance_degrees: f64,
@@ -137,17 +139,16 @@ fn main() {
         std::process::exit(1);
     }
 
-    let config_path = "config.json";
-    let config: Config = if let Ok(config_str) = std::fs::read_to_string(config_path) {
+    let config: Config = if let Ok(config_str) = std::fs::read_to_string(CONFIG_PATH) {
         serde_json::from_str(&config_str).unwrap_or_else(|e| {
-            eprintln!("Failed to parse {}: {}", config_path, e);
+            eprintln!("Failed to parse {}: {}", CONFIG_PATH, e);
             Config::default()
         })
     } else {
-        println!("{} not found, using default configuration.", config_path);
+        println!("{} not found, using default configuration.", CONFIG_PATH);
         let default_config = Config::default();
         if let Ok(config_str) = serde_json::to_string_pretty(&default_config) {
-            let _ = std::fs::write(config_path, config_str);
+            let _ = std::fs::write(CONFIG_PATH, config_str);
         }
         default_config
     };
