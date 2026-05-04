@@ -92,8 +92,8 @@ fn main() {
         args.remove(idx);
     }
 
-    if args.len() != 2 {
-        eprintln!("Usage: {} [--record] <map.bin>", args[0]);
+    if args.len() != 1 {
+        eprintln!("Usage: {} [--record]", args[0]);
         std::process::exit(1);
     }
 
@@ -112,7 +112,31 @@ fn main() {
         default_config
     };
 
-    let map_path = &args[1];
+    let bin_dir = std::path::Path::new("common/state_bins");
+    if !bin_dir.exists() || !bin_dir.is_dir() {
+        eprintln!("Error: {} directory not found.", bin_dir.display());
+        std::process::exit(1);
+    }
+
+    let mut bin_files = Vec::new();
+    for entry in std::fs::read_dir(bin_dir).expect("Failed to read state_bins directory") {
+        if let Ok(entry) = entry {
+            let path = entry.path();
+            if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("bin") {
+                bin_files.push(path);
+            }
+        }
+    }
+
+    if bin_files.is_empty() {
+        eprintln!("Error: No state bin files found in {}.", bin_dir.display());
+        std::process::exit(1);
+    } else if bin_files.len() > 1 {
+        eprintln!("Error: Multiple state bin files found in {}. Loading multiple states will be implemented later.", bin_dir.display());
+        std::process::exit(1);
+    }
+
+    let map_path = bin_files[0].to_str().unwrap().to_string();
 
     println!("Loading spatial index from {}...", map_path);
     let start_load = Instant::now();
