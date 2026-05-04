@@ -72,10 +72,10 @@ impl Recorder {
 
         if self.start_time.is_none() {
             self.start_time = Some(now);
-            
+
             let start_dt = chrono::Local.timestamp_opt(now as i64, 0).unwrap();
             let start_str = start_dt.format("%Y-%m-%d_%H-%M-%S");
-            
+
             self.temp_path = format!("common/car_logs/{}_inprogress.csv", start_str);
             let mut f = File::create(&self.temp_path).expect("Failed to create record file");
             writeln!(f, "time,long,lat,track,speed").unwrap();
@@ -99,10 +99,10 @@ impl Recorder {
             (self.file.take(), self.start_time, self.end_time)
         {
             drop(f); // ensure it's flushed/closed
-            
+
             let start_dt = chrono::Local.timestamp_opt(start as i64, 0).unwrap();
             let end_dt = chrono::Local.timestamp_opt(end as i64, 0).unwrap();
-            
+
             let start_str = start_dt.format("%Y-%m-%d_%H-%M-%S");
             let end_str = end_dt.format("%Y-%m-%d_%H-%M-%S");
 
@@ -120,8 +120,20 @@ fn main() {
         args.remove(idx);
     }
 
+    let mut replay_file = None;
+    if let Some(idx) = args.iter().position(|a| a == "--replay") {
+        if idx + 1 < args.len() {
+            replay_file = Some(args[idx + 1].clone());
+            args.remove(idx + 1);
+            args.remove(idx);
+        } else {
+            eprintln!("Error: --replay requires a file argument.");
+            std::process::exit(1);
+        }
+    }
+
     if args.len() != 1 {
-        eprintln!("Usage: {} [--record]", args[0]);
+        eprintln!("Usage: {} [--record] [--replay <csv_file>]", args[0]);
         std::process::exit(1);
     }
 
@@ -181,19 +193,6 @@ fn main() {
     let tree: RoadTree = bincode::deserialize(&mmap).expect("Failed to deserialize tree");
     println!("Loaded map index in {:.2?}", start_load.elapsed());
 
-    // Connect to the local gpsd TCP socket
-    let stream = TcpStream::connect("127.0.0.1:2947").expect("Failed to connect to gpsd");
-    let mut reader = BufReader::new(&stream);
-    let mut writer = &stream;
-
-    // Send the WATCH command to tell gpsd to start streaming JSON
-    writer
-        .write_all(b"?WATCH={\"enable\":true,\"json\":true}\n")
-        .expect("Failed to send WATCH command");
-
-    let mut line = String::new();
-    println!("Listening for gpsd data...");
-
     let running = Arc::new(AtomicBool::new(true));
     let r = running.clone();
     ctrlc::set_handler(move || {
@@ -202,34 +201,99 @@ fn main() {
     })
     .expect("Error setting Ctrl-C handler");
 
-    stream
-        .set_read_timeout(Some(std::time::Duration::from_millis(500)))
-        .expect("Failed to set read timeout");
-
     let mut speeding_start_time: Option<Instant> = None;
     let mut recorder = if record { Some(Recorder::new()) } else { None };
 
-    // Read the stream line by line
-    while running.load(Ordering::SeqCst) {
-        match reader.read_line(&mut line) {
-            Ok(0) => break, // EOF or stream closed
-            Ok(_) => {
+    if let Some(file_path) = replay_file {
+        println!("Replaying from {}...", file_path);
+        let file = File::open(&file_path).expect("Failed to open replay file");
+        let reader = BufReader::new(file);
+        let mut lines = reader.lines();
+
+        let _ = lines.next(); // Skip header
+        let mut first_row = true;
+
+        for line_res in lines {
+            if !running.load(Ordering::SeqCst) {
+                break;
+            }
+            if let Ok(line) = line_res {
+                let parts: Vec<&str> = line.split(',').collect();
+                if parts.len() < 5 {
+                    continue;
+                }
+                let time_str = parts[0];
+                let lon = parts[1];
+                let lat = parts[2];
+                let track = parts[3];
+                let speed = parts[4];
+
+                if first_row {
+                    first_row = false;
+                } else if let Ok(delta) = time_str.parse::<f64>() {
+                    std::thread::sleep(std::time::Duration::from_secs_f64(delta));
+                }
+
+                let track_json = if track.is_empty() {
+                    "null".to_string()
+                } else {
+                    track.to_string()
+                };
+
+                let fake_json = format!(
+                    r#"{{"class":"TPV","mode":3,"lat":{},"lon":{},"speed":{},"track":{},"time":"{}"}}"#,
+                    lat, lon, speed, track_json, time_str
+                );
+
                 process_gps_line(
-                    &line,
+                    &fake_json,
                     &tree,
                     &mut speeding_start_time,
                     &config,
                     &mut recorder,
                 );
-                line.clear();
             }
-            Err(e) => {
-                if e.kind() == std::io::ErrorKind::WouldBlock
-                    || e.kind() == std::io::ErrorKind::TimedOut
-                {
-                    continue;
+        }
+    } else {
+        // Connect to the local gpsd TCP socket
+        let stream = TcpStream::connect("127.0.0.1:2947").expect("Failed to connect to gpsd");
+        let mut reader = BufReader::new(&stream);
+        let mut writer = &stream;
+
+        // Send the WATCH command to tell gpsd to start streaming JSON
+        writer
+            .write_all(b"?WATCH={\"enable\":true,\"json\":true}\n")
+            .expect("Failed to send WATCH command");
+
+        let mut line = String::new();
+        println!("Listening for gpsd data...");
+
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_millis(500)))
+            .expect("Failed to set read timeout");
+
+        // Read the stream line by line
+        while running.load(Ordering::SeqCst) {
+            match reader.read_line(&mut line) {
+                Ok(0) => break, // EOF or stream closed
+                Ok(_) => {
+                    process_gps_line(
+                        &line,
+                        &tree,
+                        &mut speeding_start_time,
+                        &config,
+                        &mut recorder,
+                    );
+                    line.clear();
                 }
-                break;
+                Err(e) => {
+                    if e.kind() == std::io::ErrorKind::WouldBlock
+                        || e.kind() == std::io::ErrorKind::TimedOut
+                    {
+                        continue;
+                    }
+                    break;
+                }
             }
         }
     }
