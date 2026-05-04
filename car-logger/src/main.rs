@@ -6,9 +6,9 @@ use std::env;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
@@ -52,8 +52,18 @@ impl Recorder {
         }
     }
 
-    fn record_point(&mut self, timestamp: &str, lon: f64, lat: f64, track: Option<f64>, speed: f64) {
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    fn record_point(
+        &mut self,
+        timestamp: &str,
+        lon: f64,
+        lat: f64,
+        track: Option<f64>,
+        speed: f64,
+    ) {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
         let track_str = match track {
             Some(t) => t.to_string(),
             None => "".to_string(),
@@ -80,7 +90,9 @@ impl Recorder {
     }
 
     fn finish(mut self) {
-        if let (Some(f), Some(start), Some(end)) = (self.file.take(), self.start_time, self.end_time) {
+        if let (Some(f), Some(start), Some(end)) =
+            (self.file.take(), self.start_time, self.end_time)
+        {
             drop(f); // ensure it's flushed/closed
             let new_path = format!("common/car_logs/{}-{}.csv", start, end);
             let _ = std::fs::rename(&self.temp_path, new_path);
@@ -136,7 +148,10 @@ fn main() {
         eprintln!("Error: No state bin files found in {}.", bin_dir.display());
         std::process::exit(1);
     } else if bin_files.len() > 1 {
-        eprintln!("Error: Multiple state bin files found in {}. Loading multiple states will be implemented later.", bin_dir.display());
+        eprintln!(
+            "Error: Multiple state bin files found in {}. Loading multiple states will be implemented later.",
+            bin_dir.display()
+        );
         std::process::exit(1);
     }
 
@@ -172,9 +187,12 @@ fn main() {
     ctrlc::set_handler(move || {
         println!("\nShutting down gracefully...");
         r.store(false, Ordering::SeqCst);
-    }).expect("Error setting Ctrl-C handler");
+    })
+    .expect("Error setting Ctrl-C handler");
 
-    stream.set_read_timeout(Some(std::time::Duration::from_millis(500))).expect("Failed to set read timeout");
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_millis(500)))
+        .expect("Failed to set read timeout");
 
     let mut speeding_start_time: Option<Instant> = None;
     let mut recorder = if record { Some(Recorder::new()) } else { None };
@@ -184,11 +202,19 @@ fn main() {
         match reader.read_line(&mut line) {
             Ok(0) => break, // EOF or stream closed
             Ok(_) => {
-                process_gps_line(&line, &tree, &mut speeding_start_time, &config, &mut recorder);
+                process_gps_line(
+                    &line,
+                    &tree,
+                    &mut speeding_start_time,
+                    &config,
+                    &mut recorder,
+                );
                 line.clear();
             }
             Err(e) => {
-                if e.kind() == std::io::ErrorKind::WouldBlock || e.kind() == std::io::ErrorKind::TimedOut {
+                if e.kind() == std::io::ErrorKind::WouldBlock
+                    || e.kind() == std::io::ErrorKind::TimedOut
+                {
                     continue;
                 }
                 break;
