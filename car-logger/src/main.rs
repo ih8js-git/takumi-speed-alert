@@ -10,6 +10,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
+use chrono::TimeZone;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -71,7 +72,11 @@ impl Recorder {
 
         if self.start_time.is_none() {
             self.start_time = Some(now);
-            self.temp_path = format!("common/car_logs/{}_inprogress.csv", now);
+            
+            let start_dt = chrono::Local.timestamp_opt(now as i64, 0).unwrap();
+            let start_str = start_dt.format("%Y-%m-%d_%H-%M-%S");
+            
+            self.temp_path = format!("common/car_logs/{}_inprogress.csv", start_str);
             let mut f = File::create(&self.temp_path).expect("Failed to create record file");
             writeln!(f, "time,long,lat,track,speed").unwrap();
             writeln!(f, "{},{},{},{},{}", timestamp, lon, lat, track_str, speed).unwrap();
@@ -94,7 +99,14 @@ impl Recorder {
             (self.file.take(), self.start_time, self.end_time)
         {
             drop(f); // ensure it's flushed/closed
-            let new_path = format!("common/car_logs/{}-{}.csv", start, end);
+            
+            let start_dt = chrono::Local.timestamp_opt(start as i64, 0).unwrap();
+            let end_dt = chrono::Local.timestamp_opt(end as i64, 0).unwrap();
+            
+            let start_str = start_dt.format("%Y-%m-%d_%H-%M-%S");
+            let end_str = end_dt.format("%Y-%m-%d_%H-%M-%S");
+
+            let new_path = format!("common/car_logs/{}_to_{}.csv", start_str, end_str);
             let _ = std::fs::rename(&self.temp_path, new_path);
         }
     }
