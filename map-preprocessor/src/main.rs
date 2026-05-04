@@ -188,7 +188,12 @@ fn main() {
         "common"
     };
 
-    let output_path = format!("{}/{}.bin", common_dir, base_name);
+    let state_bins_dir = format!("{}/state_bins", common_dir);
+    if let Err(e) = std::fs::create_dir_all(&state_bins_dir) {
+        eprintln!("Failed to create state_bins directory: {}", e);
+    }
+
+    let output_path = format!("{}/{}.bin", state_bins_dir, base_name);
 
     println!("Parsing OSM PBF file: {}", input_path.display());
     let start_time = Instant::now();
