@@ -28,3 +28,4 @@ target
 *.osm.pbf
 *.bin
 config.json
+*.csv

@@ -39,6 +39,10 @@ struct Recorder {
 
 impl Recorder {
     fn new() -> Self {
+        let logs_dir = std::path::Path::new("common/car_logs");
+        if !logs_dir.exists() {
+            std::fs::create_dir_all(logs_dir).expect("Failed to create car_logs directory");
+        }
         Self {
             start_time: None,
             end_time: None,
@@ -57,7 +61,7 @@ impl Recorder {
 
         if self.start_time.is_none() {
             self.start_time = Some(now);
-            self.temp_path = format!("{}_inprogress.csv", now);
+            self.temp_path = format!("common/car_logs/{}_inprogress.csv", now);
             let mut f = File::create(&self.temp_path).expect("Failed to create record file");
             writeln!(f, "time,long,lat,track,speed").unwrap();
             writeln!(f, "{},{},{},{},{}", timestamp, lon, lat, track_str, speed).unwrap();
@@ -78,7 +82,7 @@ impl Recorder {
     fn finish(mut self) {
         if let (Some(f), Some(start), Some(end)) = (self.file.take(), self.start_time, self.end_time) {
             drop(f); // ensure it's flushed/closed
-            let new_path = format!("{}-{}.csv", start, end);
+            let new_path = format!("common/car_logs/{}-{}.csv", start, end);
             let _ = std::fs::rename(&self.temp_path, new_path);
         }
     }
