@@ -213,54 +213,53 @@ fn main() {
                 nodes.insert(node.id, [node.lon(), node.lat()]);
             }
             OsmObj::Way(way) => {
-                if let Some(highway_type) = way.tags.get("highway") {
-                    let mut final_speed = None;
+                let Some(highway_type) = way.tags.get("highway") else {
+                    continue;
+                };
 
-                    if let Some(maxspeed_str) = way.tags.get("maxspeed") {
-                        final_speed = parse_speed_limit(maxspeed_str);
+                let final_speed = way
+                    .tags
+                    .get("maxspeed")
+                    .and_then(|s| parse_speed_limit(s))
+                    .or_else(|| get_default_speed_limit(highway_type));
+
+                let Some(speed_limit) = final_speed else {
+                    continue;
+                };
+
+                let oneway_tag = way.tags.get("oneway").map(|s| s.as_str()).unwrap_or("no");
+                let is_reversed = oneway_tag == "-1";
+                let is_one_way = oneway_tag == "yes"
+                    || oneway_tag == "true"
+                    || oneway_tag == "1"
+                    || is_reversed
+                    || highway_type == "motorway"
+                    || highway_type == "motorway_link";
+
+                way_count += 1;
+
+                for window in way.nodes.windows(2) {
+                    let (n1_id, n2_id) = (window[0], window[1]);
+
+                    let (Some(&p1), Some(&p2)) = (nodes.get(&n1_id), nodes.get(&n2_id)) else {
+                        continue;
+                    };
+
+                    let mut bearing = calculate_bearing(p1[0], p1[1], p2[0], p2[1]);
+                    if is_reversed {
+                        bearing = (bearing + 180) % 360;
                     }
 
-                    if final_speed.is_none() {
-                        final_speed = get_default_speed_limit(highway_type);
-                    }
+                    let data = RoadData {
+                        speed_limit_mph: speed_limit,
+                        is_one_way,
+                        bearing,
+                    };
 
-                    if let Some(speed_limit) = final_speed {
-                        let oneway_tag = way.tags.get("oneway").map(|s| s.as_str()).unwrap_or("no");
-                        let mut is_one_way = oneway_tag == "yes"
-                            || oneway_tag == "true"
-                            || oneway_tag == "1"
-                            || oneway_tag == "-1";
-                        let is_reversed = oneway_tag == "-1";
-
-                        if highway_type == "motorway" || highway_type == "motorway_link" {
-                            is_one_way = true;
-                        }
-
-                        way_count += 1;
-
-                        for window in way.nodes.windows(2) {
-                            let n1_id = window[0];
-                            let n2_id = window[1];
-
-                            if let (Some(&p1), Some(&p2)) = (nodes.get(&n1_id), nodes.get(&n2_id)) {
-                                let mut bearing = calculate_bearing(p1[0], p1[1], p2[0], p2[1]);
-                                if is_reversed {
-                                    bearing = (bearing + 180) % 360;
-                                }
-
-                                let data = RoadData {
-                                    speed_limit_mph: speed_limit,
-                                    is_one_way,
-                                    bearing,
-                                };
-
-                                let line = RoadLine::new(p1, p2);
-                                let segment = GeomWithData::new(line, data);
-                                segments.push(segment);
-                                segment_count += 1;
-                            }
-                        }
-                    }
+                    let line = RoadLine::new(p1, p2);
+                    let segment = GeomWithData::new(line, data);
+                    segments.push(segment);
+                    segment_count += 1;
                 }
             }
             _ => {}
