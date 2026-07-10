@@ -9,20 +9,33 @@ pub struct Recorder {
     file: Option<File>,
     temp_path: String,
     last_point_time: Option<Instant>,
+    log_dir: String,
 }
 
 impl Recorder {
     pub fn new() -> Self {
-        let logs_dir = std::path::Path::new("common/car_logs");
-        if !logs_dir.exists() {
-            std::fs::create_dir_all(logs_dir).expect("Failed to create car_logs directory");
+        let log_dir = if std::path::Path::new("common/car_logs").exists()
+            || std::path::Path::new("common").exists()
+        {
+            "common/car_logs".to_string()
+        } else if std::path::Path::new("/boot/firmware").exists() {
+            "/boot/firmware/car_logs".to_string()
+        } else {
+            "/boot/car_logs".to_string()
+        };
+
+        let logs_path = std::path::Path::new(&log_dir);
+        if !logs_path.exists() {
+            std::fs::create_dir_all(logs_path).expect("Failed to create car_logs directory");
         }
+
         Self {
             start_time: None,
             end_time: None,
             file: None,
             temp_path: String::new(),
             last_point_time: None,
+            log_dir,
         }
     }
 
@@ -49,7 +62,7 @@ impl Recorder {
             let start_dt = chrono::Local.timestamp_opt(now as i64, 0).unwrap();
             let start_str = start_dt.format("%Y-%m-%d_%H-%M-%S");
 
-            self.temp_path = format!("common/car_logs/{}_inprogress.csv", start_str);
+            self.temp_path = format!("{}/{}_inprogress.csv", &self.log_dir, start_str);
             let mut f = File::create(&self.temp_path).expect("Failed to create record file");
             writeln!(f, "time,long,lat,track,speed").unwrap();
             writeln!(f, "{},{},{},{},{}", timestamp, lon, lat, track_str, speed).unwrap();
@@ -79,7 +92,7 @@ impl Recorder {
             let start_str = start_dt.format("%Y-%m-%d_%H-%M-%S");
             let end_str = end_dt.format("%Y-%m-%d_%H-%M-%S");
 
-            let new_path = format!("common/car_logs/{}_to_{}.csv", start_str, end_str);
+            let new_path = format!("{}/{}_to_{}.csv", &self.log_dir, start_str, end_str);
             let _ = std::fs::rename(&self.temp_path, new_path);
         }
     }

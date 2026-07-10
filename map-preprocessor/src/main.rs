@@ -1,14 +1,12 @@
 use std::collections::HashMap;
 use std::env;
 use std::fs::File;
-use std::io::{BufWriter, Write};
+use std::io::Write;
 use std::time::Instant;
 
-use common::{RoadData, RoadLine, RoadTree, angle_diff};
+use common::{GridRoadSegment, SpatialGrid};
 use measurements::Speed;
 use osmpbfreader::{OsmObj, OsmPbfReader};
-use rstar::PointDistance;
-use rstar::primitives::GeomWithData;
 
 // --- CONFIGURATION ---
 // Easy to access variable for adjusting how strict our heading filter is.
@@ -65,20 +63,15 @@ fn calculate_bearing(lon1: f64, lat1: f64, lon2: f64, lat2: f64) -> u16 {
     (compass.round() as u16) % 360
 }
 
-/// Queries the spatial index for the nearest road to the given point.
+/// Queries the spatial grid for the nearest road to the given point.
 ///
 /// Arguments:
 /// * `args[1]` - The command, which must be "--query".
-/// * `args[2]` - The path to the binary spatial index file.
+/// * `args[2]` - The path to the binary spatial grid file.
 /// * `args[3]` - A comma-separated string of longitude and latitude (e.g., "-122.4194,37.7749").
 /// * `args[4]` - Optional heading in degrees (e.g., "45").
 ///
 /// Panics if the arguments are invalid or if the file cannot be opened.
-///
-/// Prints:
-/// * The speed limit in mph of the nearest road to the given point.
-/// * The directionality of the nearest road (one_way or two_way).
-/// * The bearing of the nearest road in degrees.
 fn run_query(args: &[String]) {
     let bin_path = &args[2];
     let lon_lat: Vec<f64> = args[3].split(',').filter_map(|s| s.parse().ok()).collect();
@@ -101,58 +94,27 @@ fn run_query(args: &[String]) {
     };
     println!("Mapped file in {:.2?}", start.elapsed());
 
-    let start_deser = Instant::now();
-    let tree: RoadTree = bincode::deserialize(&mmap).expect("Failed to deserialize tree");
-    println!("Deserialized tree in {:.2?}", start_deser.elapsed());
+    let start_access = Instant::now();
+    let grid = rkyv::access::<common::ArchivedSpatialGrid, rkyv::rancor::Error>(&mmap)
+        .expect("Failed to access spatial grid");
+    println!("Accessed grid in {:.2?}", start_access.elapsed());
 
     let point = [lon_lat[0], lon_lat[1]];
     let start_query = Instant::now();
-
-    let mut best_match = None;
 
     if let Some(heading) = car_heading {
         println!(
             "Filtering for heading: {} degrees (+/- {} tolerance)",
             heading, HEADING_TOLERANCE_DEGREES
         );
-        for nearest in tree.nearest_neighbor_iter(&point) {
-            let dist = nearest.distance_2(&point).sqrt();
-            if dist > 0.05 {
-                // Stop searching if roads are too far
-                break;
-            }
-
-            let road_bearing = nearest.data.bearing as f64;
-            let diff = angle_diff(heading, road_bearing);
-            let mut match_found = diff <= HEADING_TOLERANCE_DEGREES;
-
-            if !match_found && !nearest.data.is_one_way {
-                let reverse_diff = angle_diff(heading, road_bearing + 180.0);
-                if reverse_diff <= HEADING_TOLERANCE_DEGREES {
-                    match_found = true;
-                }
-            }
-
-            if match_found {
-                best_match = Some((nearest, dist));
-                break;
-            }
-        }
-    } else {
-        if let Some(nearest) = tree.nearest_neighbor(&point) {
-            let dist = nearest.distance_2(&point).sqrt();
-            best_match = Some((nearest, dist));
-        }
     }
 
-    if let Some((nearest, dist)) = best_match {
+    let (speed_limit, dist) = grid.nearest_road(&point, car_heading, HEADING_TOLERANCE_DEGREES);
+
+    if let (Some(limit), Some(d)) = (speed_limit, dist) {
         println!(
             "Nearest road speed limit: {} mph (distance: {:.5} deg)",
-            nearest.data.speed_limit_mph, dist
-        );
-        println!(
-            "Road directionality: one_way={}, bearing={}",
-            nearest.data.is_one_way, nearest.data.bearing
+            limit, d
         );
     } else {
         println!("No valid roads found.");
@@ -202,7 +164,7 @@ fn main() {
     let mut pbf = OsmPbfReader::new(file);
 
     let mut nodes = HashMap::new();
-    let mut segments = Vec::new();
+    let mut segments: Vec<GridRoadSegment> = Vec::new();
 
     let mut way_count = 0;
     let mut segment_count = 0;
@@ -250,15 +212,13 @@ fn main() {
                         bearing = (bearing + 180) % 360;
                     }
 
-                    let data = RoadData {
+                    segments.push(GridRoadSegment {
+                        p1,
+                        p2,
                         speed_limit_mph: speed_limit,
                         is_one_way,
                         bearing,
-                    };
-
-                    let line = RoadLine::new(p1, p2);
-                    let segment = GeomWithData::new(line, data);
-                    segments.push(segment);
+                    });
                     segment_count += 1;
                 }
             }
@@ -272,18 +232,27 @@ fn main() {
         way_count, segment_count
     );
 
-    let tree_start = Instant::now();
-    println!("Building R-Tree...");
-    let tree = RoadTree::bulk_load(segments);
-    println!("R-Tree built in {:.2?}", tree_start.elapsed());
+    let grid_start = Instant::now();
+    println!("Building spatial grid (cell size: {:.4}°)...", SpatialGrid::DEFAULT_CELL_SIZE);
+    let grid = SpatialGrid::from_segments(&segments, SpatialGrid::DEFAULT_CELL_SIZE);
+    println!(
+        "Grid built in {:.2?} ({}×{} = {} cells)",
+        grid_start.elapsed(),
+        grid.cols,
+        grid.rows,
+        grid.cols as u64 * grid.rows as u64
+    );
 
     let save_start = Instant::now();
-    println!("Serializing R-Tree to {}...", output_path);
-    let out_file = File::create(output_path).expect("Failed to create output file");
-    let mut writer = BufWriter::new(out_file);
-    bincode::serialize_into(&mut writer, &tree).expect("Failed to serialize R-Tree");
-    writer.flush().unwrap();
-    println!("Serialized in {:.2?}", save_start.elapsed());
+    println!("Serializing spatial grid to {}...", output_path);
+    let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&grid).expect("Failed to serialize grid");
+    let mut out_file = File::create(&output_path).expect("Failed to create output file");
+    out_file.write_all(&bytes).expect("Failed to write grid");
+    println!(
+        "Serialized in {:.2?} ({:.1} MB)",
+        save_start.elapsed(),
+        bytes.len() as f64 / (1024.0 * 1024.0)
+    );
 
     println!("Map preprocessing complete!");
 }

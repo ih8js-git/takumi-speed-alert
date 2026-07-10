@@ -1,7 +1,7 @@
 mod config;
 mod gps;
 mod recorder;
-use common::RoadTree;
+use common::ArchivedSpatialGrid;
 use std::env;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
@@ -53,11 +53,36 @@ fn main() {
         default_config
     };
 
-    let bin_dir = std::path::Path::new("common/state_bins");
-    if !bin_dir.exists() || !bin_dir.is_dir() {
-        eprintln!("Error: {} directory not found.", bin_dir.display());
-        std::process::exit(1);
+    // Prioritize local common directory to completely isolate local development
+    let bin_dirs = [
+        std::path::Path::new("common/state_bins"),
+        std::path::Path::new("/boot/firmware/state_bins"),
+    ];
+
+    let mut found_bin_dir = None;
+    for dir in &bin_dirs {
+        if dir.exists() && dir.is_dir() {
+            // Check if there are any .bin files inside
+            if let Ok(entries) = std::fs::read_dir(dir) {
+                let has_bins = entries.filter_map(Result::ok).any(|e| {
+                    e.path().is_file()
+                        && e.path().extension().and_then(|s| s.to_str()) == Some("bin")
+                });
+                if has_bins {
+                    found_bin_dir = Some(*dir);
+                    break;
+                }
+            }
+        }
     }
+
+    let Some(bin_dir) = found_bin_dir else {
+        eprintln!("Error: No state .bin files found. Please place your .bin map file in one of:");
+        for dir in &bin_dirs {
+            eprintln!("  - {}", dir.display());
+        }
+        std::process::exit(1);
+    };
 
     let mut bin_files = Vec::new();
     for entry in std::fs::read_dir(bin_dir).expect("Failed to read state_bins directory") {
@@ -82,17 +107,21 @@ fn main() {
 
     let map_path = bin_files[0].to_str().unwrap().to_string();
 
-    println!("Loading spatial index from {}...", map_path);
+    println!("Loading spatial grid from {}...", map_path);
     let start_load = Instant::now();
 
-    let file = File::open(map_path).expect("Failed to open map.bin");
+    let file = File::open(&map_path).expect("Failed to open map.bin");
     let mmap = unsafe {
         memmap2::MmapOptions::new()
             .map(&file)
             .expect("Failed to map file")
     };
-    let tree: RoadTree = bincode::deserialize(&mmap).expect("Failed to deserialize tree");
-    println!("Loaded map index in {:.2?}", start_load.elapsed());
+    let grid = rkyv::access::<ArchivedSpatialGrid, rkyv::rancor::Error>(&mmap)
+        .expect("Failed to access spatial grid");
+    println!(
+        "Loaded spatial grid in {:.2?} (zero-copy from mmap)",
+        start_load.elapsed()
+    );
 
     let running = Arc::new(AtomicBool::new(true));
     let r = running.clone();
@@ -148,7 +177,7 @@ fn main() {
 
                 process_gps_line(
                     &fake_json,
-                    &tree,
+                    grid,
                     &mut speeding_start_time,
                     &config,
                     &mut recorder,
@@ -180,7 +209,7 @@ fn main() {
                 Ok(_) => {
                     process_gps_line(
                         &line,
-                        &tree,
+                        grid,
                         &mut speeding_start_time,
                         &config,
                         &mut recorder,

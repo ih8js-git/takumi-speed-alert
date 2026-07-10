@@ -3,7 +3,12 @@ name = "common"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = []
+rtree = ["dep:rstar", "dep:bincode", "dep:serde"]
+
 [dependencies]
-bincode = { workspace = true }
-rstar = { workspace = true, features = ["serde"] }
-serde = { workspace = true, features = ["derive"] }
+rkyv = { workspace = true }
+rstar = { workspace = true, features = ["serde"], optional = true }
+serde = { workspace = true, features = ["derive"], optional = true }
+bincode = { workspace = true, optional = true }

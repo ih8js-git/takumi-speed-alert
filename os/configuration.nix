@@ -12,6 +12,9 @@
   sdImage.firmwareSize = 2048; # 2GB FAT32 partition for user data drops
   hardware.enableRedistributableFirmware = lib.mkForce false;
   hardware.firmware = [ pkgs.raspberrypiWirelessFirmware ];
+  sdImage.postBuildCommands = ''
+    ${pkgs.bmaptool}/bin/bmaptool create $img -o $img.bmap
+  '';
 
   # Hardware Tweaks (Reclaim GPU RAM and Kill Bluetooth)
   sdImage.populateFirmwareCommands = lib.mkAfter ''
@@ -67,6 +70,13 @@
   systemd.oomd.enable = false;
   systemd.services."getty@tty1".enable = false;
   systemd.services."autovt@tty1".enable = false;
+
+  # Mount the FAT32 boot partition so we can access state_bins and write car_logs
+  fileSystems."/boot/firmware" = {
+    device = "/dev/disk/by-label/FIRMWARE";
+    fsType = "vfat";
+    options = lib.mkForce [ "rw" "umask=000" "nofail" "auto" "x-systemd.device-timeout=5s" ];
+  };
   
   # Strip ZFS and BTRFS
   boot.supportedFilesystems = lib.mkForce [ "vfat" "ext4" ];

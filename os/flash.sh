@@ -68,12 +68,27 @@ echo "Flashing to $TARGET_DEV (you may be prompted for your sudo password)..."
 
 # Unmount any partitions on the target device before flashing
 echo "Unmounting $TARGET_DEV partitions..."
-sudo umount ''${TARGET_DEV}* 2>/dev/null || true
+sudo umount ${TARGET_DEV}* 2>/dev/null || true
 
-if [[ "$IMG" == *.zst ]]; then
-    zstdcat "$IMG" | sudo dd of="$TARGET_DEV" bs=4M status=progress
+# Check if a .bmap file exists alongside the image
+BMAP_FILE="${IMG}.bmap"
+BMAP_ARG=""
+if [ -f "$BMAP_FILE" ]; then
+    BMAP_ARG="--bmap $BMAP_FILE"
+elif [ -f "${IMG%.zst}.bmap" ]; then
+    BMAP_ARG="--bmap ${IMG%.zst}.bmap"
 else
-    sudo dd if="$IMG" of="$TARGET_DEV" bs=4M status=progress
+    echo "Error: No .bmap file found for $IMG!"
+    echo "Please ensure your NixOS configuration generates a .bmap file."
+    exit 1
+fi
+
+# Use bmaptool with the generated .bmap file for near-instant flashing
+if command -v bmaptool >/dev/null 2>&1; then
+    time sudo bmaptool copy $BMAP_ARG "$IMG" "$TARGET_DEV"
+else
+    # Fallback to Nix if bmaptool isn't installed natively
+    time sudo nix run --extra-experimental-features "nix-command flakes" nixpkgs#bmap-tools -- copy $BMAP_ARG "$IMG" "$TARGET_DEV"
 fi
 sync
 

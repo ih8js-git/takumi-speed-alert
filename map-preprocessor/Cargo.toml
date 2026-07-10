@@ -4,9 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-bincode = { workspace = true }
-common = { workspace = true }
+common = { workspace = true, features = ["rtree"] }
 memmap2 = { workspace = true }
 measurements = { workspace = true }
 osmpbfreader = { workspace = true }
 rstar = { workspace = true }
+bincode = { workspace = true }
+rkyv = { workspace = true }

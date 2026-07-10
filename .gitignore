@@ -29,3 +29,4 @@ target
 *.bin
 config.json
 *.csv
+result

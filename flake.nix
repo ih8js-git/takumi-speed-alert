@@ -2,7 +2,18 @@
   description = "Pi Zero Builds";
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
-  outputs = { self, nixpkgs }: {
+  outputs = { self, nixpkgs }: let
+    pkgs-aarch64 = import nixpkgs { system = "aarch64-linux"; };
+    car-logger = pkgs-aarch64.rustPlatform.buildRustPackage {
+      pname = "car-logger";
+      version = "0.1.0";
+      src = pkgs-aarch64.lib.cleanSource ./.;
+      cargoLock = {
+        lockFile = ./Cargo.lock;
+      };
+    };
+  in {
+    packages.aarch64-linux.car-logger = car-logger;
     nixosConfigurations = {
       
       # Production Build (Lean)
@@ -10,7 +21,10 @@
         system = "aarch64-linux";
         modules = [ 
           "${nixpkgs}/nixos/modules/installer/sd-card/sd-image-aarch64.nix"
-          ./configuration.nix 
+          ./os/configuration.nix 
+          ({ ... }: {
+            environment.systemPackages = [ car-logger ];
+          })
         ];
       };
 
@@ -19,7 +33,7 @@
         system = "aarch64-linux";
         modules = [ 
           "${nixpkgs}/nixos/modules/installer/sd-card/sd-image-aarch64.nix"
-          ./configuration.nix 
+          ./os/configuration.nix 
           
           # Inject Dev Packages Here
           ({ pkgs, lib, ... }: {
@@ -88,6 +102,8 @@
               pkgs.htop 
               pkgs.git 
               pkgs.fastfetch
+              pkgs.tmux
+              car-logger
             ];
           })
         ];

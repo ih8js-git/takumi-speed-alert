@@ -1,14 +1,13 @@
 use crate::config::Config;
 use crate::recorder::Recorder;
-use common::{RoadTree, angle_diff};
+use common::ArchivedSpatialGrid;
 use measurements::Speed;
-use rstar::PointDistance;
 use serde_json::Value;
 use std::time::Instant;
 
 pub fn process_gps_line(
     line: &str,
-    tree: &RoadTree,
+    grid: &ArchivedSpatialGrid,
     speeding_start_time: &mut Option<Instant>,
     config: &Config,
     recorder: &mut Option<Recorder>,
@@ -44,7 +43,8 @@ pub fn process_gps_line(
 
     let point = [lon, lat];
 
-    let (speed_limit_mph, matched_dist) = match_road(&point, track, tree, config);
+    let (speed_limit_mph, matched_dist) =
+        grid.nearest_road(&point, track, config.heading_tolerance_degrees);
 
     print!(
         "Fix: {}D | Lat: {:.6} | Lon: {:.6} | Speed: {:.1} mph",
@@ -78,45 +78,4 @@ pub fn process_gps_line(
         print!(" | Heading: {:.1}°", h);
     }
     println!();
-}
-
-fn match_road(
-    point: &[f64; 2],
-    track: Option<f64>,
-    tree: &RoadTree,
-    config: &Config,
-) -> (Option<u8>, Option<f64>) {
-    if let Some(heading) = track {
-        for nearest in tree.nearest_neighbor_iter(point) {
-            let dist = nearest.distance_2(point).sqrt();
-            if dist > 0.05 {
-                break;
-            }
-
-            let road_bearing = nearest.data.bearing as f64;
-            let diff = angle_diff(heading, road_bearing);
-            let mut match_found = diff <= config.heading_tolerance_degrees;
-
-            if !match_found && !nearest.data.is_one_way {
-                let reverse_diff = angle_diff(heading, road_bearing + 180.0);
-                if reverse_diff <= config.heading_tolerance_degrees {
-                    match_found = true;
-                }
-            }
-
-            if match_found {
-                return (Some(nearest.data.speed_limit_mph), Some(dist));
-            }
-        }
-    } else {
-        // Fallback if no track/heading is provided by GPS yet
-        if let Some(nearest) = tree.nearest_neighbor(point) {
-            return (
-                Some(nearest.data.speed_limit_mph),
-                Some(nearest.distance_2(point).sqrt()),
-            );
-        }
-    }
-
-    (None, None)
 }
