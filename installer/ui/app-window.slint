@@ -23,9 +23,9 @@ export component MainWindow inherits Window {
     in property <string> download_status: "Connecting...";
     in property <string> download_speed: "";
 
-    if active_page == 0 : RegionSelectionPage {
+    if active_page == 0: RegionSelectionPage {
         available_regions: root.available_regions;
-        selected_region: root.selected_region;
+        selected_region <=> root.selected_region;
         search_changed(text) => {
             root.search_changed(text);
         }
@@ -34,12 +34,12 @@ export component MainWindow inherits Window {
         }
     }
 
-    if active_page == 1 : DownloadProgressPage {
+    if active_page == 1: DownloadProgressPage {
         target_region: root.selected_region;
         progress: root.download_progress;
         status_text: root.download_status;
         speed_text: root.download_speed;
     }
 
-    if active_page == 2 : PostDownloadPage {}
+    if active_page == 2: PostDownloadPage { }
 }

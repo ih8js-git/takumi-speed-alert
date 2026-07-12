@@ -19,7 +19,7 @@ export component RegionSelectionPage inherits VerticalLayout {
     }
 
     search-box := LineEdit {
-        placeholder-text: "Search for a region (e.g., 'North')...";
+        placeholder-text: "Search for a region or U.S. state (e.g., 'North')...";
         edited => {
             root.search_changed(self.text);
         }
@@ -29,7 +29,7 @@ export component RegionSelectionPage inherits VerticalLayout {
             }
         }
     }
-    
+
     Rectangle {
         border-color: Palette.border;
         border-width: 1px;
@@ -42,7 +42,7 @@ export component RegionSelectionPage inherits VerticalLayout {
             height: 100%;
             VerticalLayout {
                 alignment: start;
-                for region in root.available_regions : TouchArea {
+                for region in root.available_regions: TouchArea {
                     height: 35px;
                     clicked => {
                         root.selected_region = region;
@@ -72,6 +72,7 @@ export component RegionSelectionPage inherits VerticalLayout {
             vertical-alignment: center;
             color: Palette.foreground;
         }
+
         Text {
             text: root.selected_region == "" ? "None" : root.selected_region;
             color: root.selected_region == "" ? Palette.foreground : Palette.selection-background;
