@@ -11,7 +11,7 @@ export component MainWindow inherits Window {
     preferred-height: 450px;
     background: Palette.background;
 
-    // Page routing: 0 = Selection, 1 = Downloading, 2 = Processing, 3 = Device Selection, 4 = Complete
+    // Page routing: 0 = Selection, 1 = Downloading, 2 = Processing, 3 = Device Selection, 4 = Complete, 5 = Danger Device Selection, 6 = Flashing
     in-out property <int> active_page: 0;
 
     // Selection Page Properties
@@ -48,9 +48,18 @@ export component MainWindow inherits Window {
     }
 
     in property <float> processing_progress: 0.0;
+    in property <float> flash_progress: 0.0;
 
     if active_page == 2: ProcessingPage {
         progress: root.processing_progress;
+        processing_text: "Processing Map Data...";
+        processing_subtext: "This may take a minute. Please don't close the application.";
+    }
+    
+    if active_page == 6: ProcessingPage {
+        progress: root.flash_progress;
+        processing_text: "Flashing OS to Device...";
+        processing_subtext: "Writing NixOS image to the selected drive. Do not remove the drive!";
     }
 
     // Device Selection Properties

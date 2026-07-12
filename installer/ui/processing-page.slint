@@ -6,9 +6,11 @@ export component ProcessingPage inherits VerticalBox {
     padding: 20px;
 
     in property <float> progress: 0.0;
+    in property <string> processing_text: "Processing Map Data...";
+    in property <string> processing_subtext: "This may take a minute. Please don't close the application.";
 
     Text {
-        text: "Processing Map Data...";
+        text: root.processing_text;
         font-size: 20px;
         font-weight: 700;
         horizontal-alignment: center;
@@ -16,7 +18,7 @@ export component ProcessingPage inherits VerticalBox {
     }
     
     Text {
-        text: "This may take a minute. Please don't close the application.";
+        text: root.processing_subtext;
         font-size: 14px;
         horizontal-alignment: center;
         color: Palette.foreground;

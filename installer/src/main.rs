@@ -141,6 +141,7 @@ fn refresh_devices(main_window: &MainWindow) {
                 name: disk.name.into(),
                 size: size_str.into(),
                 is_removable: disk.removable,
+                device_path: disk.device_path.into(),
             };
             
             if disk.removable {
@@ -169,9 +170,124 @@ fn setup_device_selection_handlers(main_window: &MainWindow) {
     
     let flash_window_weak = main_window.as_weak();
     main_window.on_flash_requested(move |device_name| {
-        println!("Flashing to device: {}", device_name);
         if let Some(ui) = flash_window_weak.upgrade() {
-            ui.set_active_page(4); // Go to Complete
+            ui.set_active_page(6); // Go to Flashing
+            
+            let mut exe_path = std::env::current_exe().unwrap_or_default();
+            exe_path.pop();
+            exe_path.push("os");
+            
+            // Try to find the image
+            let mut found_img = None;
+            if let Ok(entries) = std::fs::read_dir("result/sd-image") {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
+                        if ext == "img" || ext == "zst" {
+                            found_img = Some(path);
+                            break;
+                        }
+                    }
+                }
+            }
+            
+            let img_path = match found_img {
+                Some(p) => p,
+                None => {
+                    eprintln!("Could not find image in result/sd-image");
+                    ui.set_active_page(4);
+                    return;
+                }
+            };
+            
+            let dev_name = device_name.to_string();
+            let ui_clone = flash_window_weak.clone();
+            
+            std::thread::spawn(move || {
+                #[cfg(target_os = "linux")]
+                let mut child = {
+                    use std::io::IsTerminal;
+                    // If launched from a terminal, developers prefer `sudo` (caches password, uses expected PAM).
+                    // If launched from a GUI/shortcut, `sudo` would hang invisibly, so we must use `pkexec`.
+                    let is_tty = std::io::stdin().is_terminal();
+                    let (cmd_name, fallback) = if is_tty {
+                        ("sudo", "pkexec")
+                    } else {
+                        ("pkexec", "sudo")
+                    };
+
+                    let mut cmd = std::process::Command::new(cmd_name);
+                    cmd.arg(exe_path.clone()).arg(img_path.clone()).arg(&dev_name);
+                    cmd.stdout(std::process::Stdio::piped());
+                    cmd.stderr(std::process::Stdio::inherit());
+                    
+                    match cmd.spawn() {
+                        Ok(c) => c,
+                        Err(_) => {
+                            std::process::Command::new(fallback)
+                                .arg(exe_path).arg(img_path).arg(&dev_name)
+                                .stdout(std::process::Stdio::piped())
+                                .stderr(std::process::Stdio::inherit())
+                                .spawn()
+                                .expect("Failed to spawn flasher")
+                        }
+                    }
+                };
+
+                #[cfg(target_os = "macos")]
+                let mut child = {
+                    let script = format!("do shell script \"'{}' '{}' '{}'\" with administrator privileges", 
+                        exe_path.display(), img_path.display(), dev_name);
+                    std::process::Command::new("osascript")
+                        .arg("-e").arg(script)
+                        .stdout(std::process::Stdio::piped())
+                        .stderr(std::process::Stdio::inherit())
+                        .spawn()
+                        .expect("Failed to spawn flasher")
+                };
+
+                #[cfg(target_os = "windows")]
+                let mut child = {
+                    // Note: capturing stdout from an elevated PowerShell process requires named pipes.
+                    // For now, we spawn directly and assume the installer was run as Administrator.
+                    std::process::Command::new(exe_path)
+                        .arg(img_path).arg(&dev_name)
+                        .stdout(std::process::Stdio::piped())
+                        .stderr(std::process::Stdio::inherit())
+                        .spawn()
+                        .expect("Failed to spawn flasher (Please run Installer as Administrator on Windows)")
+                };
+
+                if let Some(stdout) = child.stdout.take() {
+                    use std::io::{BufRead, BufReader};
+                    let reader = BufReader::new(stdout);
+                    for line in reader.lines().flatten() {
+                        if let Some(stripped) = line.strip_prefix("PROGRESS: ") {
+                            if let Ok(progress) = stripped.parse::<f32>() {
+                                let ui_weak = ui_clone.clone();
+                                let _ = slint::invoke_from_event_loop(move || {
+                                    if let Some(ui) = ui_weak.upgrade() {
+                                        ui.set_flash_progress(progress / 100.0);
+                                    }
+                                });
+                            }
+                        } else {
+                            println!("OS Worker: {}", line);
+                        }
+                    }
+                }
+                
+                let status = child.wait().unwrap();
+                if status.success() {
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = ui_clone.upgrade() {
+                            ui.set_active_page(4); // Complete
+                        }
+                    });
+                } else {
+                    eprintln!("Flashing failed!");
+                }
+            });
         }
     });
 }

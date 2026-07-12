@@ -4,6 +4,7 @@ export struct StorageDevice {
     name: string,
     size: string,
     is_removable: bool,
+    device_path: string,
 }
 
 export component DeviceSelectionPage inherits VerticalLayout {
@@ -13,6 +14,7 @@ export component DeviceSelectionPage inherits VerticalLayout {
 
     in property <[StorageDevice]> available_devices;
     in-out property <string> selected_device_name: "";
+    in-out property <string> selected_device_path: "";
     in property <string> page_title: "Select Storage Device to Flash NixOS";
     in property <bool> show_danger_button: true;
     in property <bool> show_back_button: false;
@@ -52,6 +54,7 @@ export component DeviceSelectionPage inherits VerticalLayout {
                     height: 50px;
                     clicked => {
                         root.selected_device_name = device.name;
+                        root.selected_device_path = device.device_path;
                     }
                     Rectangle {
                         background: root.selected_device_name == device.name ? Palette.selection-background : (parent.has-hover ? Palette.alternate-background : transparent);
@@ -158,9 +161,9 @@ export component DeviceSelectionPage inherits VerticalLayout {
         Button {
             text: "Flash OS";
             horizontal-stretch: 1;
-            enabled: root.selected_device_name != "";
+            enabled: root.selected_device_path != "";
             clicked => {
-                root.flash_requested(root.selected_device_name);
+                root.flash_requested(root.selected_device_path);
             }
         }
     }
