@@ -4,6 +4,18 @@ import { DownloadProgressPage } from "download-progress.slint";
 import { ProcessingPage } from "processing-page.slint";
 import { DeviceSelectionPage, StorageDevice } from "device-selection.slint";
 import { CompletePage } from "complete-page.slint";
+import { ImageSelectionPage } from "image-selection.slint";
+
+export enum AppState {
+    MapRegionSelection,
+    MapDownloading,
+    MapProcessing,
+    OsImageSelection,
+    TargetDeviceSelection,
+    DangerTargetDeviceSelection,
+    FlashingOs,
+    Complete
+}
 
 export component MainWindow inherits Window {
     title: "Takumi Speed Alert - Installer";
@@ -11,8 +23,7 @@ export component MainWindow inherits Window {
     preferred-height: 450px;
     background: Palette.background;
 
-    // Page routing: 0 = Selection, 1 = Downloading, 2 = Processing, 3 = Device Selection, 4 = Complete, 5 = Danger Device Selection, 6 = Flashing
-    in-out property <int> active_page: 0;
+    in-out property <AppState> active_page: AppState.MapRegionSelection;
 
     // Selection Page Properties
     callback download_requested(string);
@@ -26,7 +37,7 @@ export component MainWindow inherits Window {
     in property <string> download_status: "Connecting...";
     in property <string> download_speed: "";
 
-    if active_page == 0: RegionSelectionPage {
+    if active_page == AppState.MapRegionSelection: RegionSelectionPage {
         available_regions: root.available_regions;
         selected_region <=> root.selected_region;
         search_changed(text) => {
@@ -40,7 +51,7 @@ export component MainWindow inherits Window {
         }
     }
 
-    if active_page == 1: DownloadProgressPage {
+    if active_page == AppState.MapDownloading: DownloadProgressPage {
         target_region: root.selected_region;
         progress: root.download_progress;
         status_text: root.download_status;
@@ -50,16 +61,36 @@ export component MainWindow inherits Window {
     in property <float> processing_progress: 0.0;
     in property <float> flash_progress: 0.0;
 
-    if active_page == 2: ProcessingPage {
+    if active_page == AppState.MapProcessing: ProcessingPage {
         progress: root.processing_progress;
         processing_text: "Processing Map Data...";
         processing_subtext: "This may take a minute. Please don't close the application.";
     }
     
-    if active_page == 6: ProcessingPage {
+    if active_page == AppState.FlashingOs: ProcessingPage {
         progress: root.flash_progress;
         processing_text: "Flashing OS to Device...";
         processing_subtext: "Writing NixOS image to the selected drive. Do not remove the drive!";
+    }
+    // OS Image Selection Properties
+    callback os_download_requested(string);
+    callback os_search_changed(string);
+    callback os_local_file_requested();
+    in property <[string]> available_os_releases;
+    in-out property <string> selected_os_release: "";
+    
+    if active_page == AppState.OsImageSelection: ImageSelectionPage {
+        available_releases: root.available_os_releases;
+        selected_release <=> root.selected_os_release;
+        search_changed(text) => {
+            root.os_search_changed(text);
+        }
+        download_requested(release) => {
+            root.os_download_requested(release);
+        }
+        local_file_requested() => {
+            root.os_local_file_requested();
+        }
     }
 
     // Device Selection Properties
@@ -69,7 +100,7 @@ export component MainWindow inherits Window {
     callback device_refresh_requested();
     callback flash_requested(string);
 
-    if active_page == 3: DeviceSelectionPage {
+    if active_page == AppState.TargetDeviceSelection: DeviceSelectionPage {
         available_devices: root.removable_devices;
         selected_device_name <=> root.selected_device;
         page_title: "Select Storage Device to Flash NixOS";
@@ -81,13 +112,13 @@ export component MainWindow inherits Window {
             root.flash_requested(device_name);
         }
         danger_requested() => {
-            root.active_page = 5;
+            root.active_page = AppState.DangerTargetDeviceSelection;
         }
     }
     
-    if active_page == 4: CompletePage { }
+    if active_page == AppState.Complete: CompletePage { }
 
-    if active_page == 5: DeviceSelectionPage {
+    if active_page == AppState.DangerTargetDeviceSelection: DeviceSelectionPage {
         available_devices: root.non_removable_devices;
         selected_device_name <=> root.selected_device;
         page_title: "DANGER: Select Non-Removable Device";
@@ -100,7 +131,7 @@ export component MainWindow inherits Window {
             root.flash_requested(device_name);
         }
         back_requested() => {
-            root.active_page = 3;
+            root.active_page = AppState.TargetDeviceSelection;
         }
     }
 }

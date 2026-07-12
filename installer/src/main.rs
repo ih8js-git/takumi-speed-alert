@@ -11,6 +11,7 @@ fn main() -> Result<(), slint::PlatformError> {
     setup_search_handler(&main_window);
     setup_download_handler(&main_window);
     setup_local_file_handler(&main_window);
+    setup_os_image_handlers(&main_window);
     setup_device_selection_handlers(&main_window);
 
     main_window.run()
@@ -62,7 +63,7 @@ fn setup_download_handler(main_window: &MainWindow) {
         println!("Starting download for region: {}", region);
         
         let window_handle = main_window_weak.unwrap();
-        window_handle.set_active_page(1);
+        window_handle.set_active_page(AppState::MapDownloading);
         
         let thread_window_handle = main_window_weak.clone();
         let region_str = region.to_string();
@@ -99,7 +100,7 @@ fn process_downloaded_map(path: &Path, ui_weak: slint::Weak<MainWindow>) {
         let ui_w = ui_weak.clone();
         move || {
             if let Some(ui) = ui_w.upgrade() {
-                ui.set_active_page(2);
+                ui.set_active_page(AppState::MapProcessing);
                 ui.set_processing_progress(0.0);
             }
         }
@@ -120,8 +121,7 @@ fn process_downloaded_map(path: &Path, ui_weak: slint::Weak<MainWindow>) {
     } else {
         slint::invoke_from_event_loop(move || {
             if let Some(ui) = ui_weak.upgrade() {
-                refresh_devices(&ui);
-                ui.set_active_page(3); // Go to Device Selection
+                ui.set_active_page(AppState::OsImageSelection); // Go to OS Image Selection
             }
         }).unwrap();
     }
@@ -159,6 +159,33 @@ fn refresh_devices(main_window: &MainWindow) {
     main_window.set_non_removable_devices(non_rem_model.into());
 }
 
+// Global thread-safe storage for the selected OS image path
+static SELECTED_OS_IMAGE: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
+
+fn setup_os_image_handlers(main_window: &MainWindow) {
+    let main_window_weak = main_window.as_weak();
+    main_window.on_os_local_file_requested(move || {
+        let ui_weak = main_window_weak.clone();
+        std::thread::spawn(move || {
+            if let Some(path) = rfd::FileDialog::new()
+                .add_filter("OS Image", &["img", "zst", "img.zst"])
+                .pick_file()
+            {
+                println!("Selected local OS image: {:?}", path);
+                if let Ok(mut lock) = SELECTED_OS_IMAGE.lock() {
+                    *lock = Some(path);
+                }
+                slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = ui_weak.upgrade() {
+                        refresh_devices(&ui);
+                        ui.set_active_page(AppState::TargetDeviceSelection); // Go to Device Selection
+                    }
+                }).unwrap();
+            }
+        });
+    });
+}
+
 fn setup_device_selection_handlers(main_window: &MainWindow) {
     let main_window_weak = main_window.as_weak();
     
@@ -171,33 +198,23 @@ fn setup_device_selection_handlers(main_window: &MainWindow) {
     let flash_window_weak = main_window.as_weak();
     main_window.on_flash_requested(move |device_name| {
         if let Some(ui) = flash_window_weak.upgrade() {
-            ui.set_active_page(6); // Go to Flashing
+            ui.set_active_page(AppState::FlashingOs); // Go to Flashing
             
             let mut exe_path = std::env::current_exe().unwrap_or_default();
             exe_path.pop();
             exe_path.push("os");
             
-            // Try to find the image
-            let mut found_img = None;
-            if let Ok(entries) = std::fs::read_dir("result/sd-image") {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
-                        if ext == "img" || ext == "zst" {
-                            found_img = Some(path);
-                            break;
-                        }
+            let img_path = if let Ok(lock) = SELECTED_OS_IMAGE.lock() {
+                match lock.clone() {
+                    Some(p) => p,
+                    None => {
+                        eprintln!("Error: No OS image selected!");
+                        ui.set_active_page(AppState::OsImageSelection);
+                        return;
                     }
                 }
-            }
-            
-            let img_path = match found_img {
-                Some(p) => p,
-                None => {
-                    eprintln!("Could not find image in result/sd-image");
-                    ui.set_active_page(4);
-                    return;
-                }
+            } else {
+                return;
             };
             
             let dev_name = device_name.to_string();
@@ -281,7 +298,7 @@ fn setup_device_selection_handlers(main_window: &MainWindow) {
                 if status.success() {
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = ui_clone.upgrade() {
-                            ui.set_active_page(4); // Complete
+                            ui.set_active_page(AppState::Complete); // Complete
                         }
                     });
                 } else {

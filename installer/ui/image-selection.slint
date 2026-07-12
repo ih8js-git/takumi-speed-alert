@@ -1,0 +1,106 @@
+import { Button, LineEdit, ScrollView, Palette } from "std-widgets.slint";
+
+export component ImageSelectionPage inherits VerticalLayout {
+    alignment: stretch;
+    padding: 20px;
+    spacing: 15px;
+
+    in property <[string]> available_releases;
+    in-out property <string> selected_release: "";
+
+    callback download_requested(string);
+    callback search_changed(string);
+    callback local_file_requested();
+
+    Text {
+        text: "Select NixOS Image to Download or Bring Your Own";
+        font-size: 16px;
+        horizontal-alignment: center;
+        color: Palette.foreground;
+    }
+
+    search-box := LineEdit {
+        placeholder-text: "Search for a release...";
+        edited => {
+            root.search_changed(self.text);
+        }
+        accepted => {
+            if (root.available_releases.length == 1) {
+                root.selected_release = root.available_releases[0];
+            }
+        }
+    }
+
+    Rectangle {
+        border-color: Palette.border;
+        border-width: 1px;
+        border-radius: 4px;
+        vertical-stretch: 1;
+        background: Palette.control-background;
+
+        ScrollView {
+            width: 100%;
+            height: 100%;
+            VerticalLayout {
+                alignment: start;
+                for release in root.available_releases: TouchArea {
+                    height: 35px;
+                    clicked => {
+                        root.selected_release = release;
+                    }
+                    Rectangle {
+                        background: root.selected_release == release ? Palette.selection-background : (parent.has-hover ? Palette.alternate-background : transparent);
+                        Text {
+                            text: release;
+                            vertical-alignment: center;
+                            x: 10px;
+                            color: root.selected_release == release ? Palette.selection-foreground : Palette.foreground;
+                            font-size: 14px;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    HorizontalLayout {
+        spacing: 10px;
+        alignment: start;
+        Text {
+            text: "Selected Release:";
+            font-size: 14px;
+            font-weight: 700;
+            vertical-alignment: center;
+            color: Palette.foreground;
+        }
+
+        Text {
+            text: root.selected_release == "" ? "None" : root.selected_release;
+            color: root.selected_release == "" ? Palette.foreground : Palette.selection-background;
+            font-size: 14px;
+            font-weight: 700;
+            vertical-alignment: center;
+        }
+    }
+
+    HorizontalLayout {
+        spacing: 10px;
+        
+        Button {
+            text: "Download Image";
+            enabled: root.selected_release != "";
+            horizontal-stretch: 1;
+            clicked => {
+                root.download_requested(root.selected_release);
+            }
+        }
+        
+        Button {
+            text: "Select Local Image (.img / .img.zst)...";
+            horizontal-stretch: 1;
+            clicked => {
+                root.local_file_requested();
+            }
+        }
+    }
+}
