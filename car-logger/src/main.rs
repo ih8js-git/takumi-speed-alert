@@ -15,6 +15,10 @@ use gps::process_gps_line;
 use recorder::Recorder;
 
 fn main() {
+    std::thread::spawn(|| {
+        Recorder::cleanup_previous_runs();
+    });
+
     let mut args: Vec<String> = env::args().collect();
     let record_flag_idx = args.iter().position(|a| a == "--record");
     let record = record_flag_idx.is_some();

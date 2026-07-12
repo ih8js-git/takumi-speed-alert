@@ -13,8 +13,8 @@ pub struct Recorder {
 }
 
 impl Recorder {
-    pub fn new() -> Self {
-        let log_dir = if std::path::Path::new("common/car_logs").exists()
+    pub fn get_log_dir() -> String {
+        if std::path::Path::new("common/car_logs").exists()
             || std::path::Path::new("common").exists()
         {
             "common/car_logs".to_string()
@@ -22,7 +22,11 @@ impl Recorder {
             "/boot/firmware/car_logs".to_string()
         } else {
             "/boot/car_logs".to_string()
-        };
+        }
+    }
+
+    pub fn new() -> Self {
+        let log_dir = Self::get_log_dir();
 
         let logs_path = std::path::Path::new(&log_dir);
         if !logs_path.exists() {
@@ -36,6 +40,45 @@ impl Recorder {
             temp_path: String::new(),
             last_point_time: None,
             log_dir,
+        }
+    }
+
+    pub fn cleanup_previous_runs() {
+        let log_dir = Self::get_log_dir();
+        let logs_path = std::path::Path::new(&log_dir);
+        if !logs_path.exists() {
+            return;
+        }
+
+        if let Ok(entries) = std::fs::read_dir(logs_path) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
+                    if file_name.ends_with("_inprogress.csv") {
+                        let new_file_name = file_name.replace("_inprogress.csv", "_recovered.csv.zst");
+                        let compressed_path = logs_path.join(new_file_name);
+                        
+                        let mut success = false;
+                        if let Ok(mut temp_file) = File::open(&path) {
+                            if let Ok(compressed_file) = File::create(&compressed_path) {
+                                if let Ok(mut encoder) = zstd::stream::Encoder::new(compressed_file, 3) {
+                                    if std::io::copy(&mut temp_file, &mut encoder).is_ok() {
+                                        if encoder.finish().is_ok() {
+                                            success = true;
+                                            let _ = std::fs::remove_file(&path);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if !success {
+                            // Fallback if compression fails, just rename to .csv
+                            let fallback_name = file_name.replace("_inprogress.csv", "_recovered.csv");
+                            let _ = std::fs::rename(&path, logs_path.join(fallback_name));
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -81,18 +124,13 @@ impl Recorder {
     }
 
     pub fn finish(mut self) {
-        if let (Some(f), Some(start), Some(end)) =
-            (self.file.take(), self.start_time, self.end_time)
-        {
+        if let (Some(f), Some(start)) = (self.file.take(), self.start_time) {
             drop(f); // ensure it's flushed/closed
 
             let start_dt = chrono::Local.timestamp_opt(start as i64, 0).unwrap();
-            let end_dt = chrono::Local.timestamp_opt(end as i64, 0).unwrap();
-
             let start_str = start_dt.format("%Y-%m-%d_%H-%M-%S");
-            let end_str = end_dt.format("%Y-%m-%d_%H-%M-%S");
 
-            let compressed_path = format!("{}/{}_to_{}.csv.zst", &self.log_dir, start_str, end_str);
+            let compressed_path = format!("{}/{}_finished.csv.zst", &self.log_dir, start_str);
             
             let mut success = false;
             if let Ok(mut temp_file) = File::open(&self.temp_path) {
@@ -110,7 +148,7 @@ impl Recorder {
             
             if !success {
                 // Fallback: Just rename it to a normal .csv if compression failed
-                let new_path = format!("{}/{}_to_{}.csv", &self.log_dir, start_str, end_str);
+                let new_path = format!("{}/{}_finished.csv", &self.log_dir, start_str);
                 let _ = std::fs::rename(&self.temp_path, new_path);
             }
         }
