@@ -12,3 +12,4 @@ serde_json = { workspace = true }
 ctrlc = { workspace = true }
 chrono = { workspace = true }
 rkyv = { workspace = true }
+zstd = { workspace = true }

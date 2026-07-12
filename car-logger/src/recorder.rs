@@ -92,8 +92,27 @@ impl Recorder {
             let start_str = start_dt.format("%Y-%m-%d_%H-%M-%S");
             let end_str = end_dt.format("%Y-%m-%d_%H-%M-%S");
 
-            let new_path = format!("{}/{}_to_{}.csv", &self.log_dir, start_str, end_str);
-            let _ = std::fs::rename(&self.temp_path, new_path);
+            let compressed_path = format!("{}/{}_to_{}.csv.zst", &self.log_dir, start_str, end_str);
+            
+            let mut success = false;
+            if let Ok(mut temp_file) = File::open(&self.temp_path) {
+                if let Ok(compressed_file) = File::create(&compressed_path) {
+                    if let Ok(mut encoder) = zstd::stream::Encoder::new(compressed_file, 3) {
+                        if std::io::copy(&mut temp_file, &mut encoder).is_ok() {
+                            if encoder.finish().is_ok() {
+                                success = true;
+                                let _ = std::fs::remove_file(&self.temp_path);
+                            }
+                        }
+                    }
+                }
+            }
+            
+            if !success {
+                // Fallback: Just rename it to a normal .csv if compression failed
+                let new_path = format!("{}/{}_to_{}.csv", &self.log_dir, start_str, end_str);
+                let _ = std::fs::rename(&self.temp_path, new_path);
+            }
         }
     }
 }
