@@ -1,0 +1,40 @@
+import { ProgressIndicator, Palette, VerticalBox } from "std-widgets.slint";
+
+export component DownloadProgressPage inherits VerticalBox {
+    alignment: center;
+    spacing: 20px;
+    padding: 20px;
+
+    in property <string> target_region: "Unknown";
+    in property <float> progress: 0.0;
+    in property <string> status_text: "Starting download...";
+    in property <string> speed_text: "";
+
+    Text {
+        text: "Downloading: " + root.target_region;
+        font-size: 20px;
+        font-weight: 700;
+        horizontal-alignment: center;
+        color: Palette.foreground;
+    }
+
+    ProgressIndicator {
+        progress: root.progress;
+        width: 100%;
+        height: 20px;
+    }
+
+    HorizontalLayout {
+        alignment: space-between;
+        Text {
+            text: root.status_text;
+            color: Palette.foreground;
+            font-size: 14px;
+        }
+        Text {
+            text: root.speed_text;
+            color: Palette.foreground;
+            font-size: 14px;
+        }
+    }
+}

@@ -1,4 +1,7 @@
-import { Button, LineEdit, ScrollView, Palette } from "std-widgets.slint";
+import { Palette } from "std-widgets.slint";
+import { RegionSelectionPage } from "region-selection.slint";
+import { DownloadProgressPage } from "download-progress.slint";
+import { PostDownloadPage } from "post-download.slint";
 
 export component MainWindow inherits Window {
     title: "Takumi Speed Alert - Installer";
@@ -6,93 +9,37 @@ export component MainWindow inherits Window {
     preferred-height: 450px;
     background: Palette.background;
 
+    // Page routing: 0 = Selection, 1 = Downloading, 2 = Complete
+    in-out property <int> active_page: 0;
+
+    // Selection Page Properties
     callback download_requested(string);
     callback search_changed(string);
-    
     in property <[string]> available_regions;
     in-out property <string> selected_region: "";
 
-    VerticalLayout {
-        alignment: stretch;
-        padding: 20px;
-        spacing: 15px;
+    // Download Page Properties
+    in property <float> download_progress: 0.0;
+    in property <string> download_status: "Connecting...";
+    in property <string> download_speed: "";
 
-        Text {
-            text: "Select Map Region to Download:";
-            font-size: 16px;
-            horizontal-alignment: center;
-            color: Palette.foreground;
+    if active_page == 0 : RegionSelectionPage {
+        available_regions: root.available_regions;
+        selected_region: root.selected_region;
+        search_changed(text) => {
+            root.search_changed(text);
         }
-
-        search-box := LineEdit {
-            placeholder-text: "Search for a region (e.g., 'North')...";
-            edited => {
-                root.search_changed(self.text);
-            }
-            accepted => {
-                if (root.available_regions.length == 1) {
-                    root.selected_region = root.available_regions[0];
-                }
-            }
-        }
-        
-        Rectangle {
-            border-color: Palette.border;
-            border-width: 1px;
-            border-radius: 4px;
-            vertical-stretch: 1;
-            background: Palette.control-background;
-
-            ScrollView {
-                width: 100%;
-                height: 100%;
-                VerticalLayout {
-                    alignment: start;
-                    for region in root.available_regions : TouchArea {
-                        height: 35px;
-                        clicked => {
-                            root.selected_region = region;
-                        }
-                        Rectangle {
-                            background: root.selected_region == region ? Palette.selection-background : (parent.has-hover ? Palette.alternate-background : transparent);
-                            Text {
-                                text: region;
-                                vertical-alignment: center;
-                                x: 10px;
-                                color: root.selected_region == region ? Palette.selection-foreground : Palette.foreground;
-                                font-size: 14px;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        HorizontalLayout {
-            spacing: 10px;
-            alignment: start;
-            Text {
-                text: "Selected Region:";
-                font-size: 14px;
-                font-weight: 700;
-                vertical-alignment: center;
-                color: Palette.foreground;
-            }
-            Text {
-                text: root.selected_region == "" ? "None" : root.selected_region;
-                color: root.selected_region == "" ? Palette.foreground : Palette.selection-background;
-                font-size: 14px;
-                font-weight: 700;
-                vertical-alignment: center;
-            }
-        }
-
-        Button {
-            text: "Download Map";
-            enabled: root.selected_region != "";
-            clicked => {
-                root.download_requested(root.selected_region);
-            }
+        download_requested(region) => {
+            root.download_requested(region);
         }
     }
+
+    if active_page == 1 : DownloadProgressPage {
+        target_region: root.selected_region;
+        progress: root.download_progress;
+        status_text: root.download_status;
+        speed_text: root.download_speed;
+    }
+
+    if active_page == 2 : PostDownloadPage {}
 }

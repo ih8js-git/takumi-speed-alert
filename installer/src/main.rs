@@ -38,10 +38,15 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     });
 
-    main_window.on_download_requested(|region| {
+    let main_window_weak_for_download = main_window.as_weak();
+    main_window.on_download_requested(move |region| {
         println!("Starting download for region: {}", region);
         let region_str = region.to_string();
         
+        let window_handle = main_window_weak_for_download.unwrap();
+        window_handle.set_active_page(1);
+        
+        let thread_window_handle = main_window_weak_for_download.clone();
         std::thread::spawn(move || {
             let file_name = region_str.to_lowercase().replace(" ", "-");
             let url = std::format!("https://download.geofabrik.de/north-america/us/{}-latest.osm.pbf", file_name);
@@ -55,18 +60,78 @@ fn main() -> Result<(), slint::PlatformError> {
             match client.get(&url).send() {
                 Ok(mut response) => {
                     if response.status().is_success() {
-                        // Extract the final filename from the redirected URL
+                        let total_size = response.content_length().unwrap_or(0);
+                        
                         let final_filename = response.url().path_segments()
                             .and_then(|segments| segments.last())
                             .unwrap_or("downloaded.osm.pbf")
                             .to_string();
 
                         if let Ok(mut file) = std::fs::File::create(&final_filename) {
-                            if let Err(e) = std::io::copy(&mut response, &mut file) {
-                                eprintln!("Failed to write to file {}: {}", final_filename, e);
-                            } else {
-                                println!("Successfully downloaded to {}", final_filename);
+                            use std::io::{Read, Write};
+                            let mut buffer = [0; 65536]; // 64KB chunk
+                            let mut downloaded: u64 = 0;
+                            let start_time = std::time::Instant::now();
+                            let mut last_ui_update = std::time::Instant::now();
+                            
+                            loop {
+                                match response.read(&mut buffer) {
+                                    Ok(0) => break, // EOF
+                                    Ok(n) => {
+                                        if let Err(e) = file.write_all(&buffer[0..n]) {
+                                            eprintln!("Failed to write to file {}: {}", final_filename, e);
+                                            break;
+                                        }
+                                        downloaded += n as u64;
+                                        
+                                        // Update UI every 100ms
+                                        if last_ui_update.elapsed().as_millis() > 100 {
+                                            last_ui_update = std::time::Instant::now();
+                                            let elapsed = start_time.elapsed().as_secs_f32();
+                                            let speed = if elapsed > 0.0 {
+                                                (downloaded as f32 / 1024.0 / 1024.0) / elapsed
+                                            } else {
+                                                0.0
+                                            };
+                                            
+                                            let progress = if total_size > 0 {
+                                                downloaded as f32 / total_size as f32
+                                            } else {
+                                                0.0
+                                            };
+                                            
+                                            let status_str = if total_size > 0 {
+                                                std::format!("{:.1} MB / {:.1} MB", downloaded as f32 / 1024.0 / 1024.0, total_size as f32 / 1024.0 / 1024.0)
+                                            } else {
+                                                std::format!("{:.1} MB downloaded", downloaded as f32 / 1024.0 / 1024.0)
+                                            };
+                                            let speed_str = std::format!("{:.1} MB/s", speed);
+                                            
+                                            let ui_weak = thread_window_handle.clone();
+                                            slint::invoke_from_event_loop(move || {
+                                                if let Some(ui) = ui_weak.upgrade() {
+                                                    ui.set_download_progress(progress);
+                                                    ui.set_download_status(status_str.into());
+                                                    ui.set_download_speed(speed_str.into());
+                                                }
+                                            }).unwrap();
+                                        }
+                                    }
+                                    Err(e) => {
+                                        eprintln!("Error reading from response: {}", e);
+                                        break;
+                                    }
+                                }
                             }
+                            
+                            println!("Successfully downloaded to {}", final_filename);
+                            
+                            let ui_weak = thread_window_handle.clone();
+                            slint::invoke_from_event_loop(move || {
+                                if let Some(ui) = ui_weak.upgrade() {
+                                    ui.set_active_page(2);
+                                }
+                            }).unwrap();
                         } else {
                             eprintln!("Failed to create file {}", final_filename);
                         }
