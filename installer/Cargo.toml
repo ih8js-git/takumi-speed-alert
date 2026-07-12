@@ -1,0 +1,11 @@
+[package]
+name = "installer"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+slint.workspace = true
+common = { workspace = true }
+
+[build-dependencies]
+slint-build = { workspace = true }
