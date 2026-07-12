@@ -1,5 +1,6 @@
 use slint::*;
 use std::rc::Rc;
+use std::path::{Path, PathBuf};
 
 slint::include_modules!();
 
@@ -71,6 +72,59 @@ fn setup_download_handler(main_window: &MainWindow) {
     });
 }
 
+fn get_output_path_for(input_path: &Path) -> PathBuf {
+    let file_stem = input_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("map");
+    let base_name = file_stem.strip_suffix(".osm").unwrap_or(file_stem);
+
+    let common_dir = if std::path::Path::new("../common").exists() {
+        "../common"
+    } else {
+        "common"
+    };
+
+    let state_bins_dir = std::format!("{}/state_bins", common_dir);
+    if let Err(e) = std::fs::create_dir_all(&state_bins_dir) {
+        eprintln!("Failed to create state_bins directory: {}", e);
+    }
+
+    std::path::PathBuf::from(std::format!("{}/{}.bin", state_bins_dir, base_name))
+}
+
+fn process_downloaded_map(path: &Path, ui_weak: slint::Weak<MainWindow>) {
+    slint::invoke_from_event_loop({
+        let ui_w = ui_weak.clone();
+        move || {
+            if let Some(ui) = ui_w.upgrade() {
+                ui.set_active_page(2);
+                ui.set_processing_progress(0.0);
+            }
+        }
+    }).unwrap();
+    
+    let output_path = get_output_path_for(path);
+    
+    let ui_weak_for_cb = ui_weak.clone();
+    if let Err(e) = map_preprocessor::build_map(path, &output_path, move |progress| {
+        let ui_clone = ui_weak_for_cb.clone();
+        slint::invoke_from_event_loop(move || {
+            if let Some(ui) = ui_clone.upgrade() {
+                ui.set_processing_progress(progress);
+            }
+        }).unwrap();
+    }) {
+        eprintln!("Failed to process map: {}", e);
+    } else {
+        slint::invoke_from_event_loop(move || {
+            if let Some(ui) = ui_weak.upgrade() {
+                ui.set_active_page(3);
+            }
+        }).unwrap();
+    }
+}
+
 fn setup_local_file_handler(main_window: &MainWindow) {
     let main_window_weak = main_window.as_weak();
     main_window.on_local_file_requested(move || {
@@ -81,11 +135,7 @@ fn setup_local_file_handler(main_window: &MainWindow) {
                 .pick_file()
             {
                 println!("Selected local file: {:?}", path);
-                slint::invoke_from_event_loop(move || {
-                    if let Some(ui) = ui_weak.upgrade() {
-                        ui.set_active_page(2);
-                    }
-                }).unwrap();
+                process_downloaded_map(&path, ui_weak);
             }
         });
     });
@@ -160,11 +210,8 @@ fn stream_download_to_file(mut response: reqwest::blocking::Response, ui_handle:
     
     println!("Successfully downloaded to {}", final_filename);
     
-    slint::invoke_from_event_loop(move || {
-        if let Some(ui) = ui_handle.upgrade() {
-            ui.set_active_page(2);
-        }
-    }).unwrap();
+    let pbf_path = std::path::PathBuf::from(final_filename);
+    process_downloaded_map(&pbf_path, ui_handle);
 }
 
 fn update_download_progress_ui(

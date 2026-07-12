@@ -1,67 +1,9 @@
-use std::collections::HashMap;
 use std::env;
 use std::fs::File;
-use std::io::Write;
 use std::time::Instant;
 
-use common::{GridRoadSegment, SpatialGrid};
-use measurements::Speed;
-use osmpbfreader::{OsmObj, OsmPbfReader};
-
-// --- CONFIGURATION ---
-// Easy to access variable for adjusting how strict our heading filter is.
-// A tolerance of 45.0 means the car must be traveling within +/- 45 degrees of the road's direction.
-const HEADING_TOLERANCE_DEGREES: f64 = 45.0;
-
-/// Parses a speed limit string (e.g., "65", "45 km/h") into an optional u8 in MPH.
-fn parse_speed_limit(val: &str) -> Option<u8> {
-    let val_lower = val.to_lowercase();
-    let num_str: String = val_lower.chars().filter(|c| c.is_digit(10)).collect();
-    if num_str.is_empty() {
-        return None;
-    }
-    let speed: u8 = num_str.parse().ok()?;
-
-    if val_lower.contains("km/h") || val_lower.contains("kmh") {
-        Some(
-            Speed::from_kilometers_per_hour(speed as f64)
-                .as_miles_per_hour()
-                .round() as u8,
-        )
-    } else {
-        Some(speed) // Assume mph
-    }
-}
-
-/// Returns the default speed limit in MPH for a given highway type.
-fn get_default_speed_limit(highway_type: &str) -> Option<u8> {
-    match highway_type {
-        "motorway" => Some(70),
-        "motorway_link" => Some(45),
-        "trunk" | "trunk_link" => Some(65),
-        "primary" | "primary_link" => Some(55),
-        "secondary" | "secondary_link" => Some(45),
-        "tertiary" | "tertiary_link" => Some(45),
-        "unclassified" => Some(35),
-        "residential" => Some(25),
-        "living_street" => Some(15),
-        _ => None, // Things like footway, cycleway, path, etc. have no default speed limit
-    }
-}
-
-/// Calculates the bearing (direction) of a line segment between two points in degrees.
-fn calculate_bearing(lon1: f64, lat1: f64, lon2: f64, lat2: f64) -> u16 {
-    let dy = lat2 - lat1;
-    let lat_rad = lat1 * std::f64::consts::PI / 180.0;
-    let dx = (lon2 - lon1) * lat_rad.cos();
-
-    let math_angle = dy.atan2(dx) * 180.0 / std::f64::consts::PI;
-    let mut compass = 90.0 - math_angle;
-    while compass < 0.0 {
-        compass += 360.0;
-    }
-    (compass.round() as u16) % 360
-}
+use map_preprocessor::build_map;
+use map_preprocessor::HEADING_TOLERANCE_DEGREES;
 
 /// Queries the spatial grid for the nearest road to the given point.
 ///
@@ -155,104 +97,14 @@ fn main() {
         eprintln!("Failed to create state_bins directory: {}", e);
     }
 
-    let output_path = format!("{}/{}.bin", state_bins_dir, base_name);
+    let output_path_str = format!("{}/{}.bin", state_bins_dir, base_name);
+    let output_path = std::path::Path::new(&output_path_str);
 
-    println!("Parsing OSM PBF file: {}", input_path.display());
-    let start_time = Instant::now();
-
-    let file = File::open(input_path).expect("Failed to open input file");
-    let mut pbf = OsmPbfReader::new(file);
-
-    let mut nodes = HashMap::new();
-    let mut segments: Vec<GridRoadSegment> = Vec::new();
-
-    let mut way_count = 0;
-    let mut segment_count = 0;
-
-    for obj in pbf.iter().filter_map(Result::ok) {
-        match obj {
-            OsmObj::Node(node) => {
-                nodes.insert(node.id, [node.lon(), node.lat()]);
-            }
-            OsmObj::Way(way) => {
-                let Some(highway_type) = way.tags.get("highway") else {
-                    continue;
-                };
-
-                let final_speed = way
-                    .tags
-                    .get("maxspeed")
-                    .and_then(|s| parse_speed_limit(s))
-                    .or_else(|| get_default_speed_limit(highway_type));
-
-                let Some(speed_limit) = final_speed else {
-                    continue;
-                };
-
-                let oneway_tag = way.tags.get("oneway").map(|s| s.as_str()).unwrap_or("no");
-                let is_reversed = oneway_tag == "-1";
-                let is_one_way = oneway_tag == "yes"
-                    || oneway_tag == "true"
-                    || oneway_tag == "1"
-                    || is_reversed
-                    || highway_type == "motorway"
-                    || highway_type == "motorway_link";
-
-                way_count += 1;
-
-                for window in way.nodes.windows(2) {
-                    let (n1_id, n2_id) = (window[0], window[1]);
-
-                    let (Some(&p1), Some(&p2)) = (nodes.get(&n1_id), nodes.get(&n2_id)) else {
-                        continue;
-                    };
-
-                    let mut bearing = calculate_bearing(p1[0], p1[1], p2[0], p2[1]);
-                    if is_reversed {
-                        bearing = (bearing + 180) % 360;
-                    }
-
-                    segments.push(GridRoadSegment {
-                        p1,
-                        p2,
-                        speed_limit_mph: speed_limit,
-                        is_one_way,
-                        bearing,
-                    });
-                    segment_count += 1;
-                }
-            }
-            _ => {}
-        }
+    if let Err(e) = build_map(input_path, output_path, |progress| {
+        // Just print progress when run from CLI
+        println!("Progress: {:.0}%", progress * 100.0);
+    }) {
+        eprintln!("Preprocessing failed: {}", e);
+        std::process::exit(1);
     }
-
-    println!("Parsed in {:.2?}", start_time.elapsed());
-    println!(
-        "Found {} roads with speed limits, yielding {} segments.",
-        way_count, segment_count
-    );
-
-    let grid_start = Instant::now();
-    println!("Building spatial grid (cell size: {:.4}°)...", SpatialGrid::DEFAULT_CELL_SIZE);
-    let grid = SpatialGrid::from_segments(&segments, SpatialGrid::DEFAULT_CELL_SIZE);
-    println!(
-        "Grid built in {:.2?} ({}×{} = {} cells)",
-        grid_start.elapsed(),
-        grid.cols,
-        grid.rows,
-        grid.cols as u64 * grid.rows as u64
-    );
-
-    let save_start = Instant::now();
-    println!("Serializing spatial grid to {}...", output_path);
-    let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&grid).expect("Failed to serialize grid");
-    let mut out_file = File::create(&output_path).expect("Failed to create output file");
-    out_file.write_all(&bytes).expect("Failed to write grid");
-    println!(
-        "Serialized in {:.2?} ({:.1} MB)",
-        save_start.elapsed(),
-        bytes.len() as f64 / (1024.0 * 1024.0)
-    );
-
-    println!("Map preprocessing complete!");
 }

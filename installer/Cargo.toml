@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 slint = { workspace = true }
 common = { workspace = true }
+map-preprocessor = { path = "../map-preprocessor" }
 reqwest = { workspace = true }
 rfd = { workspace = true }
 

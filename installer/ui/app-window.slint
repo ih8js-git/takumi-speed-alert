@@ -1,7 +1,8 @@
 import { Palette } from "std-widgets.slint";
 import { RegionSelectionPage } from "region-selection.slint";
 import { DownloadProgressPage } from "download-progress.slint";
-import { PostDownloadPage } from "post-download.slint";
+import { ProcessingPage } from "processing-page.slint";
+import { CompletePage } from "complete-page.slint";
 
 export component MainWindow inherits Window {
     title: "Takumi Speed Alert - Installer";
@@ -9,7 +10,7 @@ export component MainWindow inherits Window {
     preferred-height: 450px;
     background: Palette.background;
 
-    // Page routing: 0 = Selection, 1 = Downloading, 2 = Complete
+    // Page routing: 0 = Selection, 1 = Downloading, 2 = Processing, 3 = Complete
     in-out property <int> active_page: 0;
 
     // Selection Page Properties
@@ -45,5 +46,11 @@ export component MainWindow inherits Window {
         speed_text: root.download_speed;
     }
 
-    if active_page == 2: PostDownloadPage { }
+    in property <float> processing_progress: 0.0;
+
+    if active_page == 2: ProcessingPage {
+        progress: root.processing_progress;
+    }
+
+    if active_page == 3: CompletePage { }
 }
