@@ -1,0 +1,167 @@
+import { Button, ScrollView, Palette } from "std-widgets.slint";
+
+export struct StorageDevice {
+    name: string,
+    size: string,
+    is_removable: bool,
+}
+
+export component DeviceSelectionPage inherits VerticalLayout {
+    alignment: stretch;
+    padding: 20px;
+    spacing: 15px;
+
+    in property <[StorageDevice]> available_devices;
+    in-out property <string> selected_device_name: "";
+    in property <string> page_title: "Select Storage Device to Flash NixOS";
+    in property <bool> show_danger_button: true;
+    in property <bool> show_back_button: false;
+
+    callback flash_requested(string);
+    callback refresh_devices();
+    callback danger_requested();
+    callback back_requested();
+
+    Text {
+        text: root.page_title;
+        font-size: 16px;
+        horizontal-alignment: center;
+        color: Palette.foreground;
+    }
+
+    Text {
+        text: "Warning: Flashing will permanently erase all data on the selected device.";
+        font-size: 14px;
+        color: #ff5555;
+        horizontal-alignment: center;
+    }
+
+    Rectangle {
+        border-color: Palette.border;
+        border-width: 1px;
+        border-radius: 4px;
+        vertical-stretch: 1;
+        background: Palette.control-background;
+
+        ScrollView {
+            width: 100%;
+            height: 100%;
+            VerticalLayout {
+                alignment: start;
+                for device in root.available_devices: TouchArea {
+                    height: 50px;
+                    clicked => {
+                        root.selected_device_name = device.name;
+                    }
+                    Rectangle {
+                        background: root.selected_device_name == device.name ? Palette.selection-background : (parent.has-hover ? Palette.alternate-background : transparent);
+                        HorizontalLayout {
+                            padding: 10px;
+                            spacing: 10px;
+                            alignment: start;
+                            
+                            VerticalLayout {
+                                alignment: center;
+                                width: 100px;
+                                Text {
+                                    text: device.name;
+                                    color: root.selected_device_name == device.name ? Palette.selection-foreground : Palette.foreground;
+                                    font-size: 16px;
+                                    font-weight: 700;
+                                }
+                            }
+                            
+                            VerticalLayout {
+                                alignment: center;
+                                Text {
+                                    text: device.size;
+                                    color: root.selected_device_name == device.name ? Palette.selection-foreground : Palette.foreground;
+                                    font-size: 14px;
+                                }
+                            }
+                            
+                            Rectangle { horizontal-stretch: 1; }
+                            
+                            VerticalLayout {
+                                alignment: center;
+                                if !device.is_removable: Rectangle {
+                                    background: #ff5555;
+                                    border-radius: 4px;
+                                    width: 110px;
+                                    height: 24px;
+                                    Text {
+                                        text: "Non-Removable";
+                                        color: white;
+                                        font-size: 12px;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                        font-weight: 700;
+                                    }
+                                }
+                                if device.is_removable: Rectangle {
+                                    background: #55ffaa;
+                                    border-radius: 4px;
+                                    width: 110px;
+                                    height: 24px;
+                                    Text {
+                                        text: "Removable";
+                                        color: black;
+                                        font-size: 12px;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                        font-weight: 700;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Text {
+        text: "If you don't see your device, try pressing the refresh button. If that doesn't work, check the non-removable devices.";
+        font-size: 12px;
+        color: Palette.foreground;
+        horizontal-alignment: center;
+        wrap: word-wrap;
+    }
+
+    HorizontalLayout {
+        spacing: 10px;
+        
+        Button {
+            text: "Refresh Devices";
+            horizontal-stretch: 1;
+            clicked => {
+                root.refresh_devices();
+            }
+        }
+
+        if root.show_danger_button: Button {
+            text: "Advanced: Show Non-Removable Devices";
+            horizontal-stretch: 1;
+            clicked => {
+                root.danger_requested();
+            }
+        }
+        
+        if root.show_back_button: Button {
+            text: "Back to Removable Devices";
+            horizontal-stretch: 1;
+            clicked => {
+                root.back_requested();
+            }
+        }
+        
+        Button {
+            text: "Flash OS";
+            horizontal-stretch: 1;
+            enabled: root.selected_device_name != "";
+            clicked => {
+                root.flash_requested(root.selected_device_name);
+            }
+        }
+    }
+}

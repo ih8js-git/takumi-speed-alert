@@ -11,6 +11,7 @@ fn main() -> Result<(), slint::PlatformError> {
     setup_search_handler(&main_window);
     setup_download_handler(&main_window);
     setup_local_file_handler(&main_window);
+    setup_device_selection_handlers(&main_window);
 
     main_window.run()
 }
@@ -119,10 +120,60 @@ fn process_downloaded_map(path: &Path, ui_weak: slint::Weak<MainWindow>) {
     } else {
         slint::invoke_from_event_loop(move || {
             if let Some(ui) = ui_weak.upgrade() {
-                ui.set_active_page(3);
+                refresh_devices(&ui);
+                ui.set_active_page(3); // Go to Device Selection
             }
         }).unwrap();
     }
+}
+
+fn refresh_devices(main_window: &MainWindow) {
+    let mut removable_devices = Vec::new();
+    let mut non_removable_devices = Vec::new();
+    
+    if let Ok(disks) = livedisk::enumerate() {
+        for disk in disks {
+            // Convert bytes to GB
+            let size_gb = disk.size_bytes as f64 / 1_073_741_824.0;
+            let size_str = std::format!("{:.1} GB", size_gb);
+            
+            let device = StorageDevice {
+                name: disk.name.into(),
+                size: size_str.into(),
+                is_removable: disk.removable,
+            };
+            
+            if disk.removable {
+                removable_devices.push(device);
+            } else {
+                non_removable_devices.push(device);
+            }
+        }
+    }
+    
+    let rem_model = Rc::new(slint::VecModel::from(removable_devices));
+    let non_rem_model = Rc::new(slint::VecModel::from(non_removable_devices));
+    
+    main_window.set_removable_devices(rem_model.into());
+    main_window.set_non_removable_devices(non_rem_model.into());
+}
+
+fn setup_device_selection_handlers(main_window: &MainWindow) {
+    let main_window_weak = main_window.as_weak();
+    
+    main_window.on_device_refresh_requested(move || {
+        if let Some(ui) = main_window_weak.upgrade() {
+            refresh_devices(&ui);
+        }
+    });
+    
+    let flash_window_weak = main_window.as_weak();
+    main_window.on_flash_requested(move |device_name| {
+        println!("Flashing to device: {}", device_name);
+        if let Some(ui) = flash_window_weak.upgrade() {
+            ui.set_active_page(4); // Go to Complete
+        }
+    });
 }
 
 fn setup_local_file_handler(main_window: &MainWindow) {

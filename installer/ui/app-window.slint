@@ -2,6 +2,7 @@ import { Palette } from "std-widgets.slint";
 import { RegionSelectionPage } from "region-selection.slint";
 import { DownloadProgressPage } from "download-progress.slint";
 import { ProcessingPage } from "processing-page.slint";
+import { DeviceSelectionPage, StorageDevice } from "device-selection.slint";
 import { CompletePage } from "complete-page.slint";
 
 export component MainWindow inherits Window {
@@ -10,7 +11,7 @@ export component MainWindow inherits Window {
     preferred-height: 450px;
     background: Palette.background;
 
-    // Page routing: 0 = Selection, 1 = Downloading, 2 = Processing, 3 = Complete
+    // Page routing: 0 = Selection, 1 = Downloading, 2 = Processing, 3 = Device Selection, 4 = Complete
     in-out property <int> active_page: 0;
 
     // Selection Page Properties
@@ -52,5 +53,45 @@ export component MainWindow inherits Window {
         progress: root.processing_progress;
     }
 
-    if active_page == 3: CompletePage { }
+    // Device Selection Properties
+    in property <[StorageDevice]> removable_devices;
+    in property <[StorageDevice]> non_removable_devices;
+    in-out property <string> selected_device: "";
+    callback device_refresh_requested();
+    callback flash_requested(string);
+
+    if active_page == 3: DeviceSelectionPage {
+        available_devices: root.removable_devices;
+        selected_device_name <=> root.selected_device;
+        page_title: "Select Storage Device to Flash NixOS";
+        show_danger_button: true;
+        refresh_devices() => {
+            root.device_refresh_requested();
+        }
+        flash_requested(device_name) => {
+            root.flash_requested(device_name);
+        }
+        danger_requested() => {
+            root.active_page = 5;
+        }
+    }
+    
+    if active_page == 4: CompletePage { }
+
+    if active_page == 5: DeviceSelectionPage {
+        available_devices: root.non_removable_devices;
+        selected_device_name <=> root.selected_device;
+        page_title: "DANGER: Select Non-Removable Device";
+        show_danger_button: false;
+        show_back_button: true;
+        refresh_devices() => {
+            root.device_refresh_requested();
+        }
+        flash_requested(device_name) => {
+            root.flash_requested(device_name);
+        }
+        back_requested() => {
+            root.active_page = 3;
+        }
+    }
 }

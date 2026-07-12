@@ -2751,6 +2751,7 @@ name = "installer"
 version = "0.1.0"
 dependencies = [
  "common",
+ "livedisk-core",
  "map-preprocessor",
  "reqwest",
  "rfd",
@@ -2776,6 +2777,16 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "io-kit-sys"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "06d3a048d09fbb6597dbf7c69f40d14df4a49487db1487191618c893fc3b1c26"
+dependencies = [
+ "core-foundation-sys",
+ "mach2",
 ]
 
 [[package]]
@@ -3063,6 +3074,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "92daf443525c4cce67b150400bc2316076100ce0b3686209eb8cf3c31612e6f0"
 
 [[package]]
+name = "livedisk-core"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8cc84b603ad46aa5182980212abf7a19449ce732eb776b96f8bd2c1730b4ed05"
+dependencies = [
+ "core-foundation 0.10.1",
+ "core-foundation-sys",
+ "io-kit-sys",
+ "thiserror 2.0.18",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "log"
 version = "0.4.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3122,6 +3146,15 @@ checksum = "5c463f9c428b7fc5ec885dcd39ce4aa61e29111d0e33483f6f98c74e89d8621e"
 dependencies = [
  "lyon_geom",
  "num-traits",
+]
+
+[[package]]
+name = "mach2"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6a1b95cd5421ec55b445b5ae102f5ea0e768de1f82bd3001e11f426c269c3aea"
+dependencies = [
+ "libc",
 ]
 
 [[package]]
@@ -3350,6 +3383,15 @@ name = "noop_proc_macro"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0676bb32a98c1a483ce53e500a81ad9c3d5b3f7c920c28c24e9cb0980d0b5bc8"
+
+[[package]]
+name = "ntapi"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3b335231dfd352ffb0f8017f3b6027a4917f7df785ea2143d8af2adc66980ae"
+dependencies = [
+ "winapi",
+]
 
 [[package]]
 name = "num-bigint"
@@ -3675,6 +3717,16 @@ dependencies = [
  "bitflags 2.11.1",
  "block2 0.6.2",
  "objc2 0.6.4",
+ "objc2-core-foundation",
+]
+
+[[package]]
+name = "objc2-io-kit"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "33fafba39597d6dc1fb709123dfa8289d39406734be322956a69f0931c73bb15"
+dependencies = [
+ "libc",
  "objc2-core-foundation",
 ]
 
@@ -5019,6 +5071,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
+name = "scratch_livedisk"
+version = "0.1.0"
+dependencies = [
+ "livedisk-core",
+]
+
+[[package]]
+name = "scratch_sysinfo"
+version = "0.1.0"
+dependencies = [
+ "sysinfo",
+]
+
+[[package]]
 name = "sctk-adwaita"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5570,6 +5636,20 @@ dependencies = [
  "libc",
  "wasm-bindgen",
  "web-sys",
+]
+
+[[package]]
+name = "sysinfo"
+version = "0.38.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "92ab6a2f8bfe508deb3c6406578252e491d299cbbf3bc0529ecc3313aee4a52f"
+dependencies = [
+ "libc",
+ "memchr",
+ "ntapi",
+ "objc2-core-foundation",
+ "objc2-io-kit",
+ "windows",
 ]
 
 [[package]]
@@ -6505,6 +6585,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "winapi"
+version = "0.3.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c839a674fcd7a98952e593242ea400abe93992746761e38641405d28b00f419"
+dependencies = [
+ "winapi-i686-pc-windows-gnu",
+ "winapi-x86_64-pc-windows-gnu",
+]
+
+[[package]]
+name = "winapi-i686-pc-windows-gnu"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ac3b87c63620426dd9b991e5ce0329eff545bccbbb34f3be09ff6fb6ab51b7b6"
+
+[[package]]
 name = "winapi-util"
 version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6512,6 +6608,12 @@ checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
  "windows-sys 0.61.2",
 ]
+
+[[package]]
+name = "winapi-x86_64-pc-windows-gnu"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
 
 [[package]]
 name = "windows"

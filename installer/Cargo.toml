@@ -9,6 +9,7 @@ common = { workspace = true }
 map-preprocessor = { path = "../map-preprocessor" }
 reqwest = { workspace = true }
 rfd = { workspace = true }
+livedisk-core = { workspace = true }
 
 [build-dependencies]
 slint-build = { workspace = true }
