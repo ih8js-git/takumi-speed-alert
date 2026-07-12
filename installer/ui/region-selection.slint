@@ -10,9 +10,10 @@ export component RegionSelectionPage inherits VerticalLayout {
 
     callback download_requested(string);
     callback search_changed(string);
+    callback local_file_requested();
 
     Text {
-        text: "Select Map Region to Download:";
+        text: "Select Map Region to Download or Bring Your Own";
         font-size: 16px;
         horizontal-alignment: center;
         color: Palette.foreground;
@@ -82,11 +83,24 @@ export component RegionSelectionPage inherits VerticalLayout {
         }
     }
 
-    Button {
-        text: "Download Map";
-        enabled: root.selected_region != "";
-        clicked => {
-            root.download_requested(root.selected_region);
+    HorizontalLayout {
+        spacing: 10px;
+        
+        Button {
+            text: "Download Map";
+            enabled: root.selected_region != "";
+            horizontal-stretch: 1;
+            clicked => {
+                root.download_requested(root.selected_region);
+            }
+        }
+        
+        Button {
+            text: "Select Local File...";
+            horizontal-stretch: 1;
+            clicked => {
+                root.local_file_requested();
+            }
         }
     }
 }

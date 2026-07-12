@@ -15,6 +15,7 @@ export component MainWindow inherits Window {
     // Selection Page Properties
     callback download_requested(string);
     callback search_changed(string);
+    callback local_file_requested();
     in property <[string]> available_regions;
     in-out property <string> selected_region: "";
 
@@ -31,6 +32,9 @@ export component MainWindow inherits Window {
         }
         download_requested(region) => {
             root.download_requested(region);
+        }
+        local_file_requested() => {
+            root.local_file_requested();
         }
     }
 

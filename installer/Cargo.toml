@@ -4,9 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-slint.workspace = true
+slint = { workspace = true }
 common = { workspace = true }
 reqwest = { workspace = true }
+rfd = { workspace = true }
 
 [build-dependencies]
 slint-build = { workspace = true }

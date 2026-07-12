@@ -9,6 +9,7 @@ fn main() -> Result<(), slint::PlatformError> {
     setup_available_regions(&main_window);
     setup_search_handler(&main_window);
     setup_download_handler(&main_window);
+    setup_local_file_handler(&main_window);
 
     main_window.run()
 }
@@ -66,6 +67,26 @@ fn setup_download_handler(main_window: &MainWindow) {
         
         std::thread::spawn(move || {
             perform_download(&region_str, thread_window_handle);
+        });
+    });
+}
+
+fn setup_local_file_handler(main_window: &MainWindow) {
+    let main_window_weak = main_window.as_weak();
+    main_window.on_local_file_requested(move || {
+        let ui_weak = main_window_weak.clone();
+        std::thread::spawn(move || {
+            if let Some(path) = rfd::FileDialog::new()
+                .add_filter("OSM PBF Map", &["osm.pbf", "pbf"])
+                .pick_file()
+            {
+                println!("Selected local file: {:?}", path);
+                slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = ui_weak.upgrade() {
+                        ui.set_active_page(2);
+                    }
+                }).unwrap();
+            }
         });
     });
 }
