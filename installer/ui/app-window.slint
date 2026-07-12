@@ -5,6 +5,7 @@ import { ProcessingPage } from "processing-page.slint";
 import { DeviceSelectionPage, StorageDevice } from "device-selection.slint";
 import { CompletePage } from "complete-page.slint";
 import { ImageSelectionPage } from "image-selection.slint";
+import { DeviceConfirmationPage } from "device-confirmation.slint";
 
 export enum AppState {
     MapRegionSelection,
@@ -13,6 +14,7 @@ export enum AppState {
     OsImageSelection,
     TargetDeviceSelection,
     DangerTargetDeviceSelection,
+    DeviceSelectionConfirmation,
     FlashingOs,
     Complete
 }
@@ -98,7 +100,22 @@ export component MainWindow inherits Window {
     in property <[StorageDevice]> non_removable_devices;
     in-out property <string> selected_device: "";
     callback device_refresh_requested();
-    callback flash_requested(string);
+    callback confirmation_requested(string);
+
+    in property <StorageDevice> selected_device_info;
+    in property <string> active_os_image_path: "";
+    callback flash_confirmed();
+
+    if active_page == AppState.DeviceSelectionConfirmation: DeviceConfirmationPage {
+        target_device: root.selected_device_info;
+        target_image_path: root.active_os_image_path;
+        back_requested() => {
+            root.active_page = AppState.TargetDeviceSelection;
+        }
+        confirm_requested() => {
+            root.flash_confirmed();
+        }
+    }
 
     if active_page == AppState.TargetDeviceSelection: DeviceSelectionPage {
         available_devices: root.removable_devices;
@@ -109,7 +126,7 @@ export component MainWindow inherits Window {
             root.device_refresh_requested();
         }
         flash_requested(device_name) => {
-            root.flash_requested(device_name);
+            root.confirmation_requested(device_name);
         }
         danger_requested() => {
             root.active_page = AppState.DangerTargetDeviceSelection;
@@ -128,7 +145,7 @@ export component MainWindow inherits Window {
             root.device_refresh_requested();
         }
         flash_requested(device_name) => {
-            root.flash_requested(device_name);
+            root.confirmation_requested(device_name);
         }
         back_requested() => {
             root.active_page = AppState.TargetDeviceSelection;

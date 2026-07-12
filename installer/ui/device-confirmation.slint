@@ -1,0 +1,151 @@
+import { Button, Palette, VerticalBox, CheckBox } from "std-widgets.slint";
+import { StorageDevice } from "device-selection.slint";
+
+export component DeviceConfirmationPage inherits VerticalLayout {
+    alignment: stretch;
+    padding: 20px;
+    spacing: 20px;
+
+    in property <StorageDevice> target_device;
+    in property <string> target_image_path: "";
+    property <bool> confirm_checked: false;
+
+    callback confirm_requested();
+    callback back_requested();
+
+    Text {
+        text: "Confirm Flash Details";
+        font-size: 20px;
+        font-weight: 800;
+        horizontal-alignment: center;
+        color: Palette.foreground;
+    }
+
+    Text {
+        text: "WARNING: ALL DATA ON THIS DEVICE WILL BE DESTROYED";
+        font-size: 14px;
+        font-weight: 800;
+        color: #ff5555;
+        horizontal-alignment: center;
+    }
+
+    Rectangle {
+        border-color: Palette.border;
+        border-width: 1px;
+        border-radius: 8px;
+        background: Palette.control-background;
+        padding: 20px;
+
+        VerticalLayout {
+            spacing: 15px;
+            padding: 15px;
+
+            HorizontalLayout {
+                Text {
+                    text: "Target Drive:";
+                    font-weight: 700;
+                    width: 120px;
+                }
+
+                Text {
+                    text: root.target_device.name;
+                    color: Palette.selection-background;
+                    font-weight: 700;
+                }
+            }
+
+            HorizontalLayout {
+                Text {
+                    text: "System Path:";
+                    font-weight: 700;
+                    width: 120px;
+                }
+
+                Text {
+                    text: root.target_device.device_path;
+                }
+            }
+
+            HorizontalLayout {
+                Text {
+                    text: "Device Model:";
+                    font-weight: 700;
+                    width: 120px;
+                }
+
+                Text {
+                    text: root.target_device.model;
+                    color: Palette.foreground;
+                }
+            }
+
+            HorizontalLayout {
+                Text {
+                    text: "Drive Size:";
+                    font-weight: 700;
+                    width: 120px;
+                }
+
+                Text {
+                    text: root.target_device.size;
+                }
+            }
+
+            HorizontalLayout {
+                Text {
+                    text: "Drive Type:";
+                    font-weight: 700;
+                    width: 120px;
+                }
+
+                Text {
+                    text: root.target_device.is_removable ? "Removable" : "Non-Removable (DANGEROUS)";
+                    color: root.target_device.is_removable ? #55ffaa : #ff5555;
+                    font-weight: 700;
+                }
+            }
+
+            Rectangle {
+                height: 1px;
+                background: Palette.border;
+            }
+
+            HorizontalLayout {
+                Text {
+                    text: "OS Image:";
+                    font-weight: 700;
+                    width: 120px;
+                }
+
+                Text {
+                    text: root.target_image_path;
+                    wrap: word-wrap;
+                    color: Palette.foreground;
+                }
+            }
+        }
+    }
+
+    CheckBox {
+        text: "I understand that all data on this device will be permanently erased.";
+        checked <=> root.confirm_checked;
+    }
+
+    HorizontalLayout {
+        spacing: 15px;
+
+        Button {
+            text: "Cancel / Back";
+            horizontal-stretch: 1;
+            clicked => { root.back_requested(); }
+        }
+
+        Button {
+            text: "Confirm and Flash OS";
+            horizontal-stretch: 1;
+            primary: true;
+            enabled: root.confirm_checked;
+            clicked => { root.confirm_requested(); }
+        }
+    }
+}

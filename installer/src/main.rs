@@ -142,6 +142,7 @@ fn refresh_devices(main_window: &MainWindow) {
                 size: size_str.into(),
                 is_removable: disk.removable,
                 device_path: disk.device_path.into(),
+                model: disk.model.unwrap_or_else(|| "Unknown Model".to_string()).into(),
             };
             
             if disk.removable {
@@ -195,10 +196,53 @@ fn setup_device_selection_handlers(main_window: &MainWindow) {
         }
     });
     
+    let confirm_window_weak = main_window.as_weak();
+    main_window.on_confirmation_requested(move |device_path| {
+        let path_str = device_path.to_string();
+        let mut target_device = None;
+        if let Ok(disks) = livedisk::enumerate() {
+            for disk in disks {
+                if disk.device_path == path_str {
+                    let size_gb = disk.size_bytes as f64 / 1_073_741_824.0;
+                    let size_str = std::format!("{:.1} GB", size_gb);
+                    target_device = Some(StorageDevice {
+                        name: disk.name.into(),
+                        size: size_str.into(),
+                        is_removable: disk.removable,
+                        device_path: disk.device_path.into(),
+                        model: disk.model.unwrap_or_else(|| "Unknown Model".to_string()).into(),
+                    });
+                    break;
+                }
+            }
+        }
+        
+        let target_device = match target_device {
+            Some(d) => d,
+            None => return,
+        };
+        
+        let img_path = if let Ok(lock) = SELECTED_OS_IMAGE.lock() {
+            match lock.clone() {
+                Some(p) => p.to_string_lossy().to_string(),
+                None => "None".to_string(),
+            }
+        } else {
+            "None".to_string()
+        };
+        
+        if let Some(ui) = confirm_window_weak.upgrade() {
+            ui.set_selected_device_info(target_device);
+            ui.set_active_os_image_path(img_path.into());
+            ui.set_active_page(AppState::DeviceSelectionConfirmation);
+        }
+    });
+
     let flash_window_weak = main_window.as_weak();
-    main_window.on_flash_requested(move |device_name| {
+    main_window.on_flash_confirmed(move || {
         if let Some(ui) = flash_window_weak.upgrade() {
             ui.set_active_page(AppState::FlashingOs); // Go to Flashing
+            let dev_name = ui.get_selected_device_info().device_path.to_string();
             
             let mut exe_path = std::env::current_exe().unwrap_or_default();
             exe_path.pop();
@@ -217,15 +261,12 @@ fn setup_device_selection_handlers(main_window: &MainWindow) {
                 return;
             };
             
-            let dev_name = device_name.to_string();
             let ui_clone = flash_window_weak.clone();
             
             std::thread::spawn(move || {
                 #[cfg(target_os = "linux")]
                 let mut child = {
                     use std::io::IsTerminal;
-                    // If launched from a terminal, developers prefer `sudo` (caches password, uses expected PAM).
-                    // If launched from a GUI/shortcut, `sudo` would hang invisibly, so we must use `pkexec`.
                     let is_tty = std::io::stdin().is_terminal();
                     let (cmd_name, fallback) = if is_tty {
                         ("sudo", "pkexec")
@@ -265,14 +306,12 @@ fn setup_device_selection_handlers(main_window: &MainWindow) {
 
                 #[cfg(target_os = "windows")]
                 let mut child = {
-                    // Note: capturing stdout from an elevated PowerShell process requires named pipes.
-                    // For now, we spawn directly and assume the installer was run as Administrator.
                     std::process::Command::new(exe_path)
                         .arg(img_path).arg(&dev_name)
                         .stdout(std::process::Stdio::piped())
                         .stderr(std::process::Stdio::inherit())
                         .spawn()
-                        .expect("Failed to spawn flasher (Please run Installer as Administrator on Windows)")
+                        .expect("Failed to spawn flasher")
                 };
 
                 if let Some(stdout) = child.stdout.take() {
@@ -298,7 +337,7 @@ fn setup_device_selection_handlers(main_window: &MainWindow) {
                 if status.success() {
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = ui_clone.upgrade() {
-                            ui.set_active_page(AppState::Complete); // Complete
+                            ui.set_active_page(AppState::Complete);
                         }
                     });
                 } else {
