@@ -40,6 +40,45 @@ fn main() -> Result<(), slint::PlatformError> {
 
     main_window.on_download_requested(|region| {
         println!("Starting download for region: {}", region);
+        let region_str = region.to_string();
+        
+        std::thread::spawn(move || {
+            let file_name = region_str.to_lowercase().replace(" ", "-");
+            let url = std::format!("https://download.geofabrik.de/north-america/us/{}-latest.osm.pbf", file_name);
+            println!("Downloading from: {}", url);
+            
+            let client = reqwest::blocking::Client::builder()
+                .user_agent("TakumiSpeedAlertInstaller/1.0")
+                .build()
+                .expect("Failed to build HTTP client");
+            
+            match client.get(&url).send() {
+                Ok(mut response) => {
+                    if response.status().is_success() {
+                        // Extract the final filename from the redirected URL
+                        let final_filename = response.url().path_segments()
+                            .and_then(|segments| segments.last())
+                            .unwrap_or("downloaded.osm.pbf")
+                            .to_string();
+
+                        if let Ok(mut file) = std::fs::File::create(&final_filename) {
+                            if let Err(e) = std::io::copy(&mut response, &mut file) {
+                                eprintln!("Failed to write to file {}: {}", final_filename, e);
+                            } else {
+                                println!("Successfully downloaded to {}", final_filename);
+                            }
+                        } else {
+                            eprintln!("Failed to create file {}", final_filename);
+                        }
+                    } else {
+                        eprintln!("Failed to download. HTTP Status: {}", response.status());
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Request failed: {}", e);
+                }
+            }
+        });
     });
 
     main_window.run()
