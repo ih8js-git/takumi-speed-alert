@@ -10,6 +10,8 @@ map-preprocessor = { path = "../map-preprocessor" }
 reqwest = { workspace = true }
 rfd = { workspace = true }
 livedisk-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 [build-dependencies]
 slint-build = { workspace = true }

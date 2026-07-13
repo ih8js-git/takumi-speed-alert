@@ -2756,6 +2756,8 @@ dependencies = [
  "map-preprocessor",
  "reqwest",
  "rfd",
+ "serde",
+ "serde_json",
  "slint",
  "slint-build",
 ]

@@ -11,6 +11,8 @@
       cargoLock = {
         lockFile = ./Cargo.lock;
       };
+      cargoBuildFlags = [ "-p" "car-logger" ];
+      cargoTestFlags = [ "-p" "car-logger" ];
     };
   in {
     packages.aarch64-linux.car-logger = car-logger;

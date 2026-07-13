@@ -12,6 +12,7 @@ export enum AppState {
     MapDownloading,
     MapProcessing,
     OsImageSelection,
+    OsDownloading,
     TargetDeviceSelection,
     DangerTargetDeviceSelection,
     DeviceSelectionConfirmation,
@@ -55,6 +56,14 @@ export component MainWindow inherits Window {
 
     if active_page == AppState.MapDownloading: DownloadProgressPage {
         target_region: root.selected_region;
+        title_text: "Downloading Map Data for " + root.selected_region + "...";
+        progress: root.download_progress;
+        status_text: root.download_status;
+        speed_text: root.download_speed;
+    }
+
+    if active_page == AppState.OsDownloading: DownloadProgressPage {
+        title_text: "Downloading OS Image (" + root.selected_os_release + ")...";
         progress: root.download_progress;
         status_text: root.download_status;
         speed_text: root.download_speed;

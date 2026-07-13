@@ -1,6 +1,23 @@
 use slint::*;
 use std::rc::Rc;
 use std::path::{Path, PathBuf};
+use serde::Deserialize;
+
+#[derive(Deserialize, Debug, Clone)]
+struct GitHubRelease {
+    name: Option<String>,
+    tag_name: String,
+    assets: Vec<GitHubAsset>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+struct GitHubAsset {
+    name: String,
+    browser_download_url: String,
+}
+
+static OS_RELEASES_LIST: std::sync::LazyLock<std::sync::Mutex<Vec<String>>> = std::sync::LazyLock::new(|| std::sync::Mutex::new(Vec::new()));
+static OS_RELEASE_URLS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, String>>> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
 
 slint::include_modules!();
 
@@ -165,6 +182,90 @@ static SELECTED_OS_IMAGE: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::
 
 fn setup_os_image_handlers(main_window: &MainWindow) {
     let main_window_weak = main_window.as_weak();
+    
+    let ui_fetch_weak = main_window_weak.clone();
+    std::thread::spawn(move || {
+        let client = reqwest::blocking::Client::builder()
+            .user_agent("TakumiSpeedAlertInstaller/1.0")
+            .build()
+            .unwrap_or_default();
+            
+        let url = "https://api.github.com/repos/ih8js-git/takumi-speed-alert/releases";
+        if let Ok(response) = client.get(url).send() {
+            if let Ok(releases) = serde_json::from_reader::<_, Vec<GitHubRelease>>(response) {
+                let mut list = Vec::new();
+                let mut map = std::collections::HashMap::new();
+                
+                for release in releases {
+                    let rel_name = release.name.unwrap_or(release.tag_name.clone());
+                    for asset in release.assets {
+                        if asset.name.ends_with(".img.zst") {
+                            let display_name = std::format!("{} - {}", rel_name, asset.name);
+                            list.push(display_name.clone());
+                            map.insert(display_name, asset.browser_download_url);
+                        }
+                    }
+                }
+                
+                if let Ok(mut g_list) = OS_RELEASES_LIST.lock() {
+                    *g_list = list.clone();
+                }
+                if let Ok(mut g_map) = OS_RELEASE_URLS.lock() {
+                    *g_map = map;
+                }
+                
+                let list_for_ui = list.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = ui_fetch_weak.upgrade() {
+                        let shared_list: Vec<SharedString> = list_for_ui.into_iter().map(SharedString::from).collect();
+                        let model = Rc::new(slint::VecModel::from(shared_list));
+                        ui.set_available_os_releases(model.into());
+                    }
+                });
+            }
+        }
+    });
+
+    let search_window_weak = main_window_weak.clone();
+    main_window.on_os_search_changed(move |search_text| {
+        let search_text = search_text.to_lowercase();
+        let list = if let Ok(l) = OS_RELEASES_LIST.lock() {
+            l.clone()
+        } else {
+            Vec::new()
+        };
+        
+        let filtered: Vec<SharedString> = list
+            .into_iter()
+            .filter(|s| s.to_lowercase().contains(&search_text))
+            .map(SharedString::from)
+            .collect();
+            
+        if let Some(ui) = search_window_weak.upgrade() {
+            let model = Rc::new(slint::VecModel::from(filtered));
+            ui.set_available_os_releases(model.into());
+        }
+    });
+    
+    let dl_window_weak = main_window_weak.clone();
+    main_window.on_os_download_requested(move |release| {
+        let url = if let Ok(map) = OS_RELEASE_URLS.lock() {
+            map.get(release.as_str()).cloned()
+        } else {
+            None
+        };
+        
+        if let Some(url) = url {
+            let ui = dl_window_weak.unwrap();
+            ui.set_active_page(AppState::OsDownloading);
+            
+            let thread_window_handle = dl_window_weak.clone();
+            std::thread::spawn(move || {
+                perform_os_download(&url, thread_window_handle);
+            });
+        }
+    });
+
     main_window.on_os_local_file_requested(move || {
         let ui_weak = main_window_weak.clone();
         std::thread::spawn(move || {
@@ -470,6 +571,98 @@ fn update_download_progress_ui(
             ui.set_download_progress(progress);
             ui.set_download_status(status_str.into());
             ui.set_download_speed(speed_str.into());
+        }
+    }).unwrap();
+}
+
+fn perform_os_download(url: &str, ui_handle: slint::Weak<MainWindow>) {
+    println!("Downloading OS image from: {}", url);
+    
+    let client = reqwest::blocking::Client::builder()
+        .user_agent("TakumiSpeedAlertInstaller/1.0")
+        .build()
+        .expect("Failed to build HTTP client");
+    
+    match client.get(url).send() {
+        Ok(response) => {
+            if response.status().is_success() {
+                stream_os_download_to_file(response, ui_handle);
+            } else {
+                eprintln!("Failed to download OS image. HTTP Status: {}", response.status());
+            }
+        }
+        Err(e) => eprintln!("Request failed: {}", e),
+    }
+}
+
+fn stream_os_download_to_file(mut response: reqwest::blocking::Response, ui_handle: slint::Weak<MainWindow>) {
+    let total_size = response.content_length().unwrap_or(0);
+    
+    let url_path = response.url().path();
+    let file_name = std::path::Path::new(url_path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("downloaded_os.img.zst");
+
+    let common_dir = if std::path::Path::new("../common").exists() {
+        "../common"
+    } else {
+        "common"
+    };
+    
+    let os_images_dir = std::format!("{}/os_images", common_dir);
+    if let Err(e) = std::fs::create_dir_all(&os_images_dir) {
+        eprintln!("Failed to create os_images directory: {}", e);
+    }
+    
+    let final_path = std::path::PathBuf::from(std::format!("{}/{}", os_images_dir, file_name));
+
+    let mut file = match std::fs::File::create(&final_path) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("Failed to create file {:?}: {}", final_path, e);
+            return;
+        }
+    };
+
+    use std::io::{Read, Write};
+    let mut buffer = [0; 65536];
+    let mut downloaded: u64 = 0;
+    let start_time = std::time::Instant::now();
+    let mut last_ui_update = std::time::Instant::now();
+    
+    loop {
+        match response.read(&mut buffer) {
+            Ok(0) => break, // EOF
+            Ok(n) => {
+                if let Err(e) = file.write_all(&buffer[0..n]) {
+                    eprintln!("Failed to write to file {:?}: {}", final_path, e);
+                    break;
+                }
+                downloaded += n as u64;
+                
+                if last_ui_update.elapsed().as_millis() > 100 {
+                    last_ui_update = std::time::Instant::now();
+                    update_download_progress_ui(&ui_handle, downloaded, total_size, start_time);
+                }
+            }
+            Err(e) => {
+                eprintln!("Error reading from response: {}", e);
+                break;
+            }
+        }
+    }
+    
+    println!("Successfully downloaded OS to {:?}", final_path);
+    
+    if let Ok(mut lock) = SELECTED_OS_IMAGE.lock() {
+        *lock = Some(final_path.clone());
+    }
+    
+    slint::invoke_from_event_loop(move || {
+        if let Some(ui) = ui_handle.upgrade() {
+            refresh_devices(&ui);
+            ui.set_active_page(AppState::TargetDeviceSelection);
         }
     }).unwrap();
 }
